@@ -64,7 +64,7 @@ Add these **GitHub Actions secrets** (Settings → Secrets and variables → Act
 
 Create a GitHub environment named `production` if using environment-scoped secrets. Set approvals there only if desired. Permit SSH from your deployment runner through the VM firewall/security list; GitHub-hosted runner IPs vary. Prefer a controlled runner/network if you need fixed IP allowlisting.
 
-Every deployment transfers `ENV_FILE` over host-verified SSH and installs it with mode `600`. Dependencies/config are checked before stopping the service. The persistent data directory is preserved. The workflow checks service activity, not end-to-end WhatsApp health; after deployment send `help` and check a budget report. Updating the same service does not require pairing again. There is brief downtime during file replacement.
+Every deployment transfers `ENV_FILE` over host-verified SSH and installs it with mode `600`. Dependencies/config are checked before stopping the service. The persistent data directory is preserved. The workflow checks service activity, not end-to-end WhatsApp health; after deployment send `help` and check a budget report. Updating the same service does not require pairing again. There is brief downtime during file replacement. If replacement/startup fails, the script restores the previous files and environment and restarts the service; keep a private backup of the persistent data separately.
 
 ## Privacy and operations
 
