@@ -7,13 +7,14 @@ export class Bot {
   fmt(n) { return money(n, this.config.currency); }
   menu(categories = this.config.categories) { return categories.map((c, i) => `${i + 1}. ${c}`).join('\n'); }
   help() {
-    return `Commands (amounts have up to 2 decimals):\nexpense 400\nexpense 4000 dinner at a restaurant\nhousehold expense 400 groceries\nset budget 50000\nset household budget 80000\nget budget / get budget detail\nset shopping budget 10000 / set dine-out budget 5000\nget shopping budget / get dine-out budget detail\n(Also: set/get household shopping/dine-out budget)\nget household budget / get household budget detail\ntotal <configured name or ID> / total household\nlend 1000 to Alex / borrow 1000 from Alex\ncollect 500 from Alex / repay 500 to Alex\nhousehold lend 1000 to Alex (also borrow, collect, repay)\nloans / household loans\nadd <category> / add <category> loan / add <category> <budget>\nadd category <multiword category name>\ncategories / household categories\nset <budget name> budget <amount> / get <budget name> budget detail\nPrefix add with household for shared categories.\ncancel / help / help expense / help expenses\nConfirm entries with yes; no or cancel discards them. Calendar months start on the 1st. Loan balances span all months.`;
+    return `Commands (amounts have up to 2 decimals):\nexpense 400\nexpense 4000 dinner at a restaurant\nhousehold expense 400 groceries\nset budget 50000\nset household budget 80000\nget budget / get budget detail\nset shopping budget 10000 / set dine-out budget 5000\nget shopping budget / get dine-out budget detail\n(Also: set/get household shopping/dine-out budget)\nget household budget / get household budget detail\ntotal <configured name or ID> / total household\nlend 1000 to Alex / borrow 1000 from Alex\ncollect 500 from Alex / repay 500 to Alex\nhousehold lend 1000 to Alex (also borrow, collect, repay)\nloans / household loans\nadd <category> / add <category> loan / add <category> <budget>\nadd category <multiword category name>\ncategories / household categories\nset <budget name> budget <amount> / get <budget name> budget detail\nPrefix add with household for shared categories.\ncancel / help expense / help expenses\nConfirm entries with yes; no or cancel discards them. Calendar months start on the 1st. Loan balances span all months.`;
   }
   async handle(actor, text, messageId) {
     text = text.trim();
-    if (!text || text.length > 1000) return 'Send a command under 1,000 characters. Try help.';
+    if (!text || text.length > 1000) return 'Send a command under 1,000 characters. Try help expense.';
     const lower = text.toLowerCase();
-    if (/^help(?:\s+expenses?)?$/.test(lower)) return this.help();
+    if (lower === 'help') return null;
+    if (/^help\s+expenses?$/.test(lower)) return this.help();
     if (lower === 'cancel' || lower === 'no') { delete this.sessions[actor.id]; await this.saveSessions(); return 'Entry cancelled.'; }
     const rows = await this.store.rows();
     let pending = this.sessions[actor.id];
@@ -98,7 +99,7 @@ export class Bot {
       } catch (e) { if (e.message.startsWith('Use a positive') || e.message === 'Amount is out of range.') return e.message; throw e; }
     }
     const entry = text.match(/^(household\s+)?(expense|lend|borrow|collect|repay)\s+(\S+)(?:\s+(.+))?$/i);
-    if (!entry) return 'Unknown command. Send help for examples.';
+    if (!entry) return 'Unknown command. Send help expense for examples.';
     let value;
     try { value = amount(entry[3]); } catch (e) { return e.message; }
     const kind = entry[2].toLowerCase();

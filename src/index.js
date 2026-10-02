@@ -35,6 +35,7 @@ client.on('message', msg => {
     try {
       const id = createHash('sha256').update(msg.id._serialized).digest('hex');
       const reply = await bot.handle(actor, msg.body, id);
+      if (reply === null) return;
       // Keep every entry; split long monthly reports at line boundaries.
       let chunk = '';
       for (const line of reply.split('\n')) {

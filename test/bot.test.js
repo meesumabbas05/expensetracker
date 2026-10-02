@@ -47,7 +47,7 @@ test('cancel, invalid categories, session expiry and timezone month boundary', a
   await send('expense 20'); await send('food'); assert.match(await send('11'), /1–10/);
   await send('cancel'); assert.deepEqual(sessions, {}); assert.equal(rows.length, 0);
   await send('expense 30'); sessions.one.updated = 0;
-  assert.match(await send('help'), /Commands/);
+  assert.match(await send('help expense'), /Commands/);
   assert.match(await send('yes'), /Unknown command/);
   assert.deepEqual(dateParts(new Date('2026-09-30T20:00:00Z'), 'Asia/Karachi'), { date: '2026-10-01', month: '2026-10' });
 });
@@ -156,7 +156,9 @@ test('help expense and help expenses show all commands without disrupting pendin
   const { send, sessions, rows } = setup();
   await send('expense 10');
   const before = JSON.stringify(sessions);
-  for (const text of ['help', '  HELP expense  ', 'help   expenses']) {
+  assert.equal(await send('help'), null);
+  assert.equal(JSON.stringify(sessions), before);
+  for (const text of ['  HELP expense  ', 'help   expenses']) {
     const reply = await send(text);
     for (const command of ['expense 400', 'set budget', 'get budget', 'total', 'lend', 'borrow', 'collect', 'repay', 'add <category>', 'categories', 'household', 'cancel']) assert.ok(reply.includes(command));
     assert.equal(JSON.stringify(sessions), before);

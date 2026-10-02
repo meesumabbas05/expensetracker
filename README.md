@@ -20,7 +20,7 @@ A private Node.js bot using whatsapp-web.js, Google Sheets, and optional Gemini 
 | `collect 500 from Alex` / `repay 500 to Alex` | Reduces outstanding loans for that exact name (case-insensitive) |
 | `loans` / `household loans` | Outstanding balances across all months |
 | `yes` / `cancel` | Save pending entry or discard it |
-| `help` / `help expense` / `help expenses` | Show the full list of supported commands; pending entries stay intact |
+| `help expense` / `help expenses` | Show the full list of supported commands; pending entries stay intact |
 
 Use `set household shopping budget 10000` and `get household dine-out budget detail` for shared category limits. The main budget report also shows both category budgets. Shopping/dine-out expenses count in their category limit **and** the main limit; setting category limits does not change the main limit. `SHOPPING_CATEGORY` and `DINE_OUT_CATEGORY` must match the labels in your ten categories.
 
@@ -39,6 +39,8 @@ Months start on the 1st in `TIMEZONE`. Budget updates never erase spending and d
 - Prefix creation with `household`, e.g. `household add Brownzie loan`. Personal categories stay personal; household categories are shared. Send `categories` or `household categories` to inspect funding and menu numbers. Additional categories start at 11; Gemini also sees the expanded list. `expense 100 Brownzie` directly selects that category.
 
 Definitions persist in the same Ledger as `category` rows with zero `AmountMinor` and a JSON funding description; leave these rows intact. They are excluded from transaction reports and spending. Definitions are permanent across months; limits remain monthly. Funding cannot currently be reassigned after creation. Category names are case-insensitively unique per account. User-entered values and configuration strings are trimmed at their beginning and end. Expense descriptions retain the stated place or use case. Every expense counts toward its funding budget and the overall budget, once in each report.
+
+Bare `help` is ignored by this bot so the existing solar bot can handle it. Use `help expense` or `help expenses` for expense commands.
 
 ## Local setup
 
@@ -86,7 +88,7 @@ Add these **GitHub Actions secrets** (Settings → Secrets and variables → Act
 
 Create a GitHub environment named `production` if using environment-scoped secrets. Set approvals there only if desired. Permit SSH from your deployment runner through the VM firewall/security list; GitHub-hosted runner IPs vary. Prefer a controlled runner/network if you need fixed IP allowlisting.
 
-Every deployment transfers `ENV_FILE` over host-verified SSH and installs it with mode `600`. Dependencies/config are checked before stopping the service. The persistent data directory is preserved. The workflow checks service activity, not end-to-end WhatsApp health; after deployment send `help` and check a budget report. Updating the same service does not require pairing again. There is brief downtime during file replacement. If replacement/startup fails, the script restores the previous files and environment and restarts the service; keep a private backup of the persistent data separately.
+Every deployment transfers `ENV_FILE` over host-verified SSH and installs it with mode `600`. Dependencies/config are checked before stopping the service. The persistent data directory is preserved. The workflow checks service activity, not end-to-end WhatsApp health; after deployment send `help expense` and check a budget report. Updating the same service does not require pairing again. There is brief downtime during file replacement. If replacement/startup fails, the script restores the previous files and environment and restarts the service; keep a private backup of the persistent data separately.
 
 ## Privacy and operations
 
