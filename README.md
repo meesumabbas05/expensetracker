@@ -19,7 +19,8 @@ A private Node.js bot using whatsapp-web.js, Google Sheets, and optional Gemini 
 | `lend 1000 to Alex` / `borrow 1000 from Alex` | Records lending/borrowing separately |
 | `collect 500 from Alex` / `repay 500 to Alex` | Reduces outstanding loans for that exact name (case-insensitive) |
 | `loans` / `household loans` | Outstanding balances across all months |
-| `yes` / `cancel` / `help` | Save pending entry, discard, or show commands |
+| `yes` / `cancel` | Save pending entry or discard it |
+| `help` / `help expense` / `help expenses` | Show the full list of supported commands; pending entries stay intact |
 
 Use `set household shopping budget 10000` and `get household dine-out budget detail` for shared category limits. The main budget report also shows both category budgets. Shopping/dine-out expenses count in their category limit **and** the main limit; setting category limits does not change the main limit. `SHOPPING_CATEGORY` and `DINE_OUT_CATEGORY` must match the labels in your ten categories.
 

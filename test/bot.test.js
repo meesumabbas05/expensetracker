@@ -151,3 +151,15 @@ test('new budget setup can be cancelled; source totals and month rollover stay c
   assert.match(await send('get loan budget'), /Budget: not set/);
   assert.match(await send('get loan budget'), /Used: PKR 0.00/);
 });
+
+test('help expense and help expenses show all commands without disrupting pending input', async () => {
+  const { send, sessions, rows } = setup();
+  await send('expense 10');
+  const before = JSON.stringify(sessions);
+  for (const text of ['help', '  HELP expense  ', 'help   expenses']) {
+    const reply = await send(text);
+    for (const command of ['expense 400', 'set budget', 'get budget', 'total', 'lend', 'borrow', 'collect', 'repay', 'add <category>', 'categories', 'household', 'cancel']) assert.ok(reply.includes(command));
+    assert.equal(JSON.stringify(sessions), before);
+  }
+  assert.equal(rows.length, 0);
+});
