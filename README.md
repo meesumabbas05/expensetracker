@@ -32,7 +32,18 @@ Months start on the 1st in `TIMEZONE`. Budget updates never erase spending and d
 ## Local setup
 
 1. Install Node.js 22+, clone this repo, run `npm ci`, and copy `.env.example` to `.env`.
-2. Create a Google Cloud project, enable the **Google Sheets API**, create a service account and JSON key. Create an empty Google spreadsheet, share it with the service-account email as **Editor**, and share it privately with your household. Set its ID and the entire JSON key in `.env` as shown in the example. The bot creates a `Ledger` tab; keep its headers and machine-format rows intact. `AmountMinor` stores cents (400 means 4.00). Use another tab for custom formulas/views.
+2. Create a Google Cloud project, enable the **Google Sheets API**, create a service account and JSON key. Create an empty Google spreadsheet, share it with the service-account email as **Editor**, and share it privately with your household. Set its ID and the entire JSON key in `.env`. The JSON can span multiple lines inside single quotes: The bot creates a `Ledger` tab; keep its headers and machine-format rows intact. `AmountMinor` stores cents (400 means 4.00). Use another tab for custom formulas/views.
+
+   ```dotenv
+   GOOGLE_SERVICE_ACCOUNT_JSON='{
+     "type": "service_account",
+     "client_email": "YOUR_SERVICE_ACCOUNT_EMAIL",
+     "private_key": "YOUR_PRIVATE_KEY_WITH_ORIGINAL_ESCAPED_NEWLINES"
+   }'
+   ```
+
+   Paste the **complete downloaded JSON**, including all its fields, between the single quotes; this abbreviated example only illustrates formatting. Keep the `\n` escapes inside `private_key` exactly as downloaded. The same multiline format works inside GitHub's `ENV_FILE` secret.
+
 3. Set `USERS_JSON` to your users' stable IDs, display names, and WhatsApp identities (`<international digits>@c.us`, no `+`). WhatsApp may use `@lid` identities; include the actual sender's LID as an additional `whatsappIds` entry if needed. Obtain identities privately from your existing bot or WhatsApp tooling; never commit them. IDs/names must be unique; `household` is reserved. Sheet rows store configured account IDs, not phone numbers.
 4. Optionally get a Gemini key from [Google AI Studio](https://aistudio.google.com/), set `GEMINI_API_KEY` and an available free-tier `GEMINI_MODEL`. Set `GEMINI_ENABLED=false` for guided-only input. Model availability, free quotas, and billing depend on your account: check [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing). Only the free-text expense description is sent to Gemini; it may contain personal information you type. No sender ID is sent. Google's free-tier data terms apply; disabling Gemini avoids this transfer.
 5. Run `npm test && npm run check`. Run `SHOW_QR=true npm start` in a private terminal, then scan using WhatsApp → Linked devices. A separate bot number is recommended; use a distinct session/client ID from other bots. Send commands from an allowlisted user to the linked bot number. Turn off `SHOW_QR` after pairing.
