@@ -209,3 +209,52 @@ test('budget all detail groups every funding budget and category without double 
   await send('set loan budget 400');
   assert.match(await send('budget detail loan'), /Remaining: PKR 380.00/);
 });
+
+test('defined commands and prompt replies never call Gemini', async () => {
+  const original = global.fetch;
+  const { bot, send, rows } = setup();
+  bot.config = { ...config, geminiEnabled: true, geminiKey: 'test-only-placeholder' };
+  try {
+    let calls = 0;
+    global.fetch = async () => { calls++; throw new Error('Gemini must not be called'); };
+    await send('set budget 1000'); await send('budget');
+    await send('expense 400 dinner at Restaurant');
+    assert.equal(bot.sessions.one.stage, 'category');
+    await send('4'); await send('yes');
+    await send('expense 20 fuel stop | Fuel'); await send('yes');
+    assert.equal(rows.filter(r => r.kind === 'expense').length, 2);
+    assert.equal(calls, 0);
+  } finally { global.fetch = original; }
+});
+test('natural language is translated once, validated and dispatched with confirmation', async () => {
+  const original = global.fetch;
+  const { bot, send, rows } = setup();
+  bot.config = { ...config, geminiEnabled: true, geminiKey: 'test-only-placeholder' };
+  try {
+    let calls = 0; let request;
+    global.fetch = async (_url, options) => {
+      calls++; request = JSON.parse(options.body);
+      return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '{"command":"expense 400 dinner at Restaurant | Dine-out"}' }] } }] }) };
+    };
+    const input = '  I spent 400 having dinner at Restaurant  ';
+    assert.match(await send(input), /Interpreted as: expense 400 dinner at Restaurant \| Dine-out/);
+    assert.equal(request.contents[0].parts[0].text, input);
+    assert.ok(request.systemInstruction.parts[0].text.includes(bot.help()));
+    assert.equal(rows.length, 0);
+    await send('yes');
+    assert.equal(rows[0].category, 'Dine-out'); assert.equal(rows[0].description, 'dinner at Restaurant');
+    assert.equal(calls, 1);
+  } finally { global.fetch = original; }
+});
+test('invalid Gemini output gets exactly three retries, no recursive calls or writes', async () => {
+  const original = global.fetch;
+  const { bot, send, rows } = setup();
+  bot.config = { ...config, geminiEnabled: true, geminiKey: 'test-only-placeholder' };
+  try {
+    let calls = 0;
+    global.fetch = async () => { calls++; return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '{"command":"do an unsupported thing"}' }] } }] }) }; };
+    assert.match(await send('please do something'), /Could not match/);
+    assert.equal(calls, 4); assert.equal(rows.length, 0); assert.deepEqual(bot.sessions, {});
+    assert.equal(await send('help'), null); assert.equal(calls, 4);
+  } finally { global.fetch = original; }
+});

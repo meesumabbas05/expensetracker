@@ -1,5 +1,6 @@
 import { amount, dateParts, money, loans, categoryDefinitions, fundingOf, fundingSummary } from './domain.js';
-import { extract } from './extract.js';
+import { translateCommand } from './extract.js';
+import { parseCommand, validGeneratedCommand } from './commands.js';
 export class Bot {
   constructor(config, store, sessions, saveSessions, now = () => new Date()) {
     Object.assign(this, { config, store, sessions, saveSessions, now });
@@ -7,9 +8,10 @@ export class Bot {
   fmt(n) { return money(n, this.config.currency); }
   menu(categories = this.config.categories) { return categories.map((c, i) => `${i + 1}. ${c}`).join('\n'); }
   help() {
-    return `Commands (positive amounts, up to 2 decimals):\nexpense 400\nexpense 4000 dinner at a restaurant\nexpense 100 Brownzie\nset budget 50000\nset household budget 80000\nset shopping budget 10000 / set dine-out budget 5000\nset <budget name> budget <amount>\nbudget — your personal budget\nbudget <name> — one funding budget\nbudget detail <name> — remaining, totals and entries by category\nbudget detail — personal details\nbudget all — each budget separately\nbudget all detail — all entries grouped by budget and category\nget budget / get budget detail (legacy aliases)\ntotal <configured name or ID> / total household\nlend 1000 to Alex / borrow 1000 from Alex\ncollect 500 from Alex / repay 500 to Alex\nloans / household loans\nadd <category> — choose separate or existing funding\nadd <category> household / add <category> loan\nadd <category> <budget>\nadd category <multiword category name>\nadd <category> from <multiword budget name>\ncategories\ncancel / help expense / help expenses\nReply yes to save pending entries. Household funding is shared; other budgets belong to the sender. Each expense uses one funding budget. Months start on the 1st; budget updates retain spending.`;
+    return `Commands (positive amounts, up to 2 decimals):\nexpense 400\nexpense 4000 dinner at a restaurant\nexpense 100 Brownzie\nexpense <amount> <description> | <category>\nset budget 50000\nset household budget 80000\nset shopping budget 10000 / set dine-out budget 5000\nset <budget name> budget <amount>\nbudget — your personal budget\nbudget <name> — one funding budget\nbudget detail <name> — remaining, totals and entries by category\nbudget detail — personal details\nbudget all — each budget separately\nbudget all detail — all entries grouped by budget and category\nget budget / get budget detail (legacy aliases)\ntotal <configured name or ID> / total household\nlend 1000 to Alex / borrow 1000 from Alex\ncollect 500 from Alex / repay 500 to Alex\nloans / household loans\nadd <category> — choose separate or existing funding\nadd <category> household / add <category> loan\nadd <category> <budget>\nadd category <multiword category name>\nadd <category> from <multiword budget name>\ncategories\ncancel / help expense / help expenses\nReply yes to save pending entries. Household funding is shared; other budgets belong to the sender. Each expense uses one funding budget. Months start on the 1st; budget updates retain spending.`;
   }
-  async handle(actor, text, messageId) {
+  async handle(actor, text, messageId, translated = false) {
+    const fullInput = text;
     text = text.trim();
     if (!text || text.length > 1000) return 'Send a command under 1,000 characters. Try help expense.';
     const lower = text.toLowerCase();
@@ -49,6 +51,18 @@ export class Bot {
       return this.prompt(pending);
     }
     if (rows.some(r => r.id === messageId)) return 'This entry has already been saved.';
+    const categoryNames = categoryDefinitions(rows, actor.id, this.config).map(d => d.name);
+    const parsedCommand = parseCommand(text, categoryNames);
+    if (!parsedCommand?.valid) {
+      if (!translated) {
+        const command = await translateCommand(fullInput, this.config, this.help(), categoryNames, validGeneratedCommand);
+        if (command) {
+          const reply = await this.handle(actor, command, messageId, true);
+          return reply === null ? null : `Interpreted as: ${command}\n\n${reply}`;
+        }
+      }
+      return parsedCommand?.error || 'Could not match a supported expense command. Send help expense for examples.';
+    }
     const month = dateParts(this.now(), this.config.timezone).month;
     const scope = lower.startsWith('household ') ? 'household' : actor.id;
     const scopedText = text.replace(/^household\s+/i, '').trim();
@@ -97,14 +111,15 @@ export class Bot {
     const kind = entry[2].toLowerCase();
     pending = { options: categoryDefinitions(rows, entry[1] ? 'household' : actor.id, this.config).map(d => d.name), id: messageId, account: entry[1] ? 'household' : actor.id, kind, amount: value, description: '', category: kind === 'expense' ? '' : `Loan: ${kind}`, stage: 'description', updated: this.now().getTime(), lastMessageId: messageId };
     if (entry[4]) {
-      if (entry[4].length > 200) return 'Use a description under 200 characters.';
       pending.description = kind === 'expense' ? entry[4].trim() : entry[4].replace(/^(to|from)\s+/i, '').trim();
       if (!pending.description) return 'Include the other person’s name.';
       if (kind === 'expense') {
         const direct = pending.options.find(c => c.toLowerCase() === entry[4].trim().toLowerCase());
-        const parsed = direct ? { description: entry[4].trim(), category: direct } : await extract(entry[4].trim(), { ...this.config, categories: pending.options });
-        if (parsed) { pending.description = parsed.description.trim(); pending.category = parsed.category; pending.stage = 'confirm'; }
-        else pending.stage = 'category';
+        if (parsedCommand.category || direct) {
+          pending.description = parsedCommand.description;
+          pending.category = parsedCommand.category || direct;
+          pending.stage = 'confirm';
+        } else pending.stage = 'category';
       } else pending.stage = 'confirm';
     }
     // Loans require a counterparty, not an expense category.

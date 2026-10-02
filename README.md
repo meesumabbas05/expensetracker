@@ -1,13 +1,15 @@
 # WhatsApp expense tracker
 
-A private Node.js bot using whatsapp-web.js, Google Sheets, and optional Gemini extraction. Runs as a separate systemd service on an existing Linux VM. No public web server or inbound application port is needed.
+A private Node.js bot using whatsapp-web.js, Google Sheets, and optional Gemini command translation. Runs as a separate systemd service on an existing Linux VM. No public web server or inbound application port is needed.
 
 ## Commands
 
 | Message | Result |
 | --- | --- |
 | `expense 400` | Asks where/why, then a numbered category |
-| `expense 4000 dinner at a restaurant` | Gemini suggests place/category; asks for confirmation |
+| `expense 4000 dinner at a restaurant` | Parses locally, asks for category, then confirmation |
+| `I spent 4000 on dinner at a restaurant` | Gemini translates unparseable input into one supported command |
+| `expense 4000 dinner at a restaurant \| Dine-out` | Explicit category; asks for confirmation without Gemini |
 | `expense 100 Brownzie` | Directly selects the named category and its funding budget |
 | `add Brownzie household` | Links Brownzie to the shared household funding budget |
 | `add Brownzie loan` | Links Brownzie to a budget named loan (not a lending transaction) |
@@ -33,11 +35,11 @@ A private Node.js bot using whatsapp-web.js, Google Sheets, and optional Gemini 
 
 **A category is a label; a budget is its funding source.** Each expense consumes exactly one funding budget. Household is one shared funding budget: use `add Brownzie household`, not `household add Brownzie loan`. Household-funded categories are available to both users; rows still retain who paid. Other category definitions and named budgets belong to their creator. `budget <configured user name or ID>` also queries that person's personal budget. The older `get budget`, `get household budget`, and `get <name> budget detail` syntax remains an alias.
 
-Shopping and dine-out use their own funding budgets and are excluded from the personal budget's used amount. Custom separate budgets behave the same way. A category using `personal` (also `main`/`overall`) consumes your personal budget. `SHOPPING_CATEGORY` and `DINE_OUT_CATEGORY` must match labels in your ten starting categories. Additional categories start at menu item 11, and Gemini receives the expanded list.
+Shopping and dine-out use their own funding budgets and are excluded from the personal budget's used amount. Custom separate budgets behave the same way. A category using `personal` (also `main`/`overall`) consumes your personal budget. `SHOPPING_CATEGORY` and `DINE_OUT_CATEGORY` must match labels in your ten starting categories. Additional categories start at menu item 11, and Gemini receives the expanded category list when command translation is needed.
 
 Months start on the 1st in `TIMEZONE`. Setting a limit mid-month retains all spending; limits do not carry into the next month. Each funding budget's **used = expenses + money lent + borrowed-money repayments assigned to it**. Ordinary `lend`/`repay` commands consume your personal budget; prefix loan commands with `household` for shared funding. Borrowing/collecting do not affect used or refund previous budget expenditure. Repayments cannot exceed the outstanding balance. Reuse the same counterparty spelling; loan balances span months. A budget named loan is only a funding label and does not create a debt record.
 
-Amounts are positive with up to two decimals. Expenses/loans/category creation require `yes`; budget-limit commands update immediately. To correct a suggestion, cancel and use the guided expense flow. Budgets can show negative remaining when exceeded. Definitions persist in the Ledger as `category` rows with zero `AmountMinor` and JSON funding descriptions; preserve these rows. Categories are permanent across months; funding cannot currently be reassigned. Deletion/editing and automatic budget renewal are not implemented. Values are trimmed at their beginning/end. All allowlisted users can view all budget reports; other senders and groups are ignored. Bare `help` is ignored for the solar bot.
+Amounts are positive with up to two decimals. Expenses/loans/category creation require `yes`; budget-limit commands update immediately. To correct a translated command, cancel and use the guided expense flow. Budgets can show negative remaining when exceeded. Definitions persist in the Ledger as `category` rows with zero `AmountMinor` and JSON funding descriptions; preserve these rows. Categories are permanent across months; funding cannot currently be reassigned. Deletion/editing and automatic budget renewal are not implemented. Values are trimmed at their beginning/end. All allowlisted users can view all budget reports; other senders and groups are ignored. Bare `help` is ignored for the solar bot.
 
 ## Local setup
 
@@ -55,10 +57,14 @@ Amounts are positive with up to two decimals. Expenses/loans/category creation r
    Paste the **complete downloaded JSON**, including all its fields, between the single quotes; this abbreviated example only illustrates formatting. Keep the `\n` escapes inside `private_key` exactly as downloaded. The same multiline format works inside GitHub's `ENV_FILE` secret.
 
 3. Set `USERS_JSON` to your users' stable IDs, display names, and WhatsApp identities (`<international digits>@c.us`, no `+`). WhatsApp may use `@lid` identities; include the actual sender's LID as an additional `whatsappIds` entry if needed. Obtain identities privately from your existing bot or WhatsApp tooling; never commit them. IDs/names must be unique; `household` is reserved. Sheet rows store configured account IDs, not phone numbers.
-4. Optionally get a Gemini key from [Google AI Studio](https://aistudio.google.com/), set `GEMINI_API_KEY` and an available free-tier `GEMINI_MODEL`. Set `GEMINI_ENABLED=false` for guided-only input. Model availability, free quotas, and billing depend on your account: check [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing). Only the free-text expense description is sent to Gemini; it may contain personal information you type. No sender ID is sent. Google's free-tier data terms apply; disabling Gemini avoids this transfer.
+4. Optionally get a Gemini key from [Google AI Studio](https://aistudio.google.com/), set `GEMINI_API_KEY` and an available free-tier `GEMINI_MODEL`. Set `GEMINI_ENABLED=false` for guided-only input. Model availability, free quotas, and billing depend on your account: check [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing). Only inputs that fail local command parsing are sent to Gemini, in full (including any personal information you type), along with the exact `help expense` response and available category names. No sender ID, credentials or ledger rows are sent. Valid commands and active prompt replies stay local. Google's free-tier data terms apply; disabling Gemini avoids this transfer.
 5. Run `npm test && npm run check`. Run `SHOW_QR=true npm start` in a private terminal, then scan using WhatsApp → Linked devices. A separate bot number is recommended; use a distinct session/client ID from other bots. Send commands from an allowlisted user to the linked bot number. Turn off `SHOW_QR` after pairing.
 
 WhatsApp session and pending prompts live in `DATA_DIR`; preserve and back them up privately. Never run two copies against the same session/sheet: writes are serialized and deduplicated within one instance, not across multiple instances. Interrupted prompts survive restarts and expire after the configured idle time. Google Sheets is the authoritative ledger; unavailable Sheets means the bot cannot save/report. There is no offline ledger queue. Sheets API appends are not transactional: an unusually delayed write followed by a retry can still duplicate an entry; the normal read-before-retry path deduplicates by message hash.
+
+## Gemini fallback behavior
+
+The bot parses every new message locally first. If it cannot parse it, Gemini receives the original full input, the exact command-help response, and existing category names. A strict JSON schema requests only `{"command":"..."}`; the shared local parser validates the result before dispatch. Extra fields, unknown commands, multiple lines, invalid amounts, unknown explicit categories and fabricated confirmation replies are rejected. There is one initial generation plus **three retries** for invalid output, each with corrective feedback; no invalid attempt writes to Sheets. Authentication/quota/service errors return the local fallback immediately. Generated commands never recursively invoke Gemini. The reply shows `Interpreted as: ...` before the normal command result; expenses still require `yes`, while budget-limit commands update immediately, just like typed commands. If translation fails, use `help expense` and enter a supported command directly. Canonical commands such as `expense 4000 dinner at a restaurant` no longer invoke AI: they ask for a category unless the description is an exact category name or uses `| <category>`.
 
 ## Oracle/Linux VM setup (one time)
 
