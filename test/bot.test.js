@@ -76,3 +76,78 @@ test('shopping and dine-out limits are independent subsets of main budget', asyn
   assert.match(await send('get household shopping budget'), /Budget: PKR 600.00/);
   assert.match(await send('get shopping budget', config.users[1]), /Budget: not set/);
 });
+
+test('custom categories share budgets, trim text, and appear beyond menu item ten', async () => {
+  const { send, rows } = setup();
+  await send('set shopping budget 500');
+  assert.match(await send('  add   Brownzie   shopping  '), /Reply yes/);
+  await send(' yes ');
+  assert.match(await send('categories'), /11. Brownzie/);
+  await send('expense 100'); await send('  a gift  '); await send(' 11 '); await send('yes');
+  assert.equal(rows.find(r => r.kind === 'expense').description, 'a gift');
+  assert.match(await send('get shopping budget'), /Remaining: PKR 400.00/);
+  assert.equal(summary(rows, 'one', '2026-10').used, 10000);
+  assert.match(await send('add brownzie'), /already exists/);
+  assert.doesNotMatch(await send('categories', config.users[1]), /Brownzie/);
+});
+test('new named funding budget prompts for amount and keeps main budget separate', async () => {
+  const { send, rows } = setup();
+  await send('set budget 1000');
+  assert.match(await send('add Brownzie Gifts'), /monthly budget amount for Gifts/);
+  await send('200'); await send('yes');
+  await send('expense 50 Brownzie'); await send('yes');
+  assert.match(await send('get Gifts budget detail'), /Remaining: PKR 150.00/);
+  assert.equal(summary(rows, 'one', '2026-10').limit, 100000);
+  await send('set Gifts budget 300');
+  assert.match(await send('get gifts budget'), /Remaining: PKR 250.00/);
+});
+test('guided separate and main funding; household definitions persist in ledger', async () => {
+  const { bot, send, sessions, rows } = setup();
+  await send('household add category   Pet supplies   '); await send('separate'); await send('400'); await send('yes');
+  await send('household expense 20 Pet supplies'); await send('yes');
+  assert.match(await send('get household Pet supplies budget'), /Remaining: PKR 380.00/);
+  await send('add Essentials'); await send('shared'); await send('main'); await send('yes');
+  assert.match(await send('categories'), /Essentials → overall budget/);
+  const restarted = new Bot(config, bot.store, sessions, async () => {}, bot.now);
+  assert.match(await restarted.handle(config.users[1], 'household categories', 'restart'), /Pet supplies/);
+  assert.equal(rows.filter(r => r.kind === 'category').length, 2);
+});
+test('loan is a funding budget, never a lending transaction', async () => {
+  const { send, rows } = setup();
+  assert.match(await send('  add brownzie loan  '), /monthly budget amount for loan/);
+  await send('500'); await send('yes');
+  await send('expense 100 brownzie'); await send('yes');
+  assert.equal(rows.at(-1).kind, 'expense');
+  assert.equal(rows.at(-1).category, 'brownzie');
+  assert.match(await send('get loan budget'), /Remaining: PKR 400.00/);
+  assert.match(await send('loans'), /No outstanding loans/);
+  assert.equal(summary(rows, 'one', '2026-10').used, 10000);
+  assert.match(await send('add coffee loan'), /Reply yes/);
+  await send('yes'); await send('expense 20 coffee'); await send('yes');
+  assert.match(await send('get loan budget'), /Remaining: PKR 380.00/);
+});
+test('partially successful category plus budget creation can be retried without duplicates', async () => {
+  const { bot, send, rows } = setup();
+  const original = bot.store.append; let fail = true;
+  bot.store.append = async r => { if (r.kind === 'budget' && fail) { fail = false; throw new Error('timeout'); } await original(r); };
+  await send('add Hobby'); await send('separate'); await send('100');
+  await assert.rejects(send('yes'));
+  await send('yes');
+  assert.equal(rows.filter(r => r.kind === 'category').length, 1);
+  assert.equal(rows.filter(r => r.kind === 'budget').length, 1);
+});
+
+test('new budget setup can be cancelled; source totals and month rollover stay correct', async () => {
+  const { bot, send, rows } = setup();
+  await send('add Cancelled NewFund'); await send('cancel');
+  assert.equal(rows.length, 0);
+  await send('set budget 1000');
+  await send('add Brownzie loan'); await send('300'); await send('yes');
+  await send('expense 20 Brownzie'); await send('yes');
+  assert.match(await send('get main budget'), /Used: PKR 20.00/);
+  assert.match(await send('get loan budget'), /Remaining: PKR 280.00/);
+  bot.now = () => new Date('2026-11-02T12:00:00Z');
+  assert.match(await send('categories'), /Brownzie/);
+  assert.match(await send('get loan budget'), /Budget: not set/);
+  assert.match(await send('get loan budget'), /Used: PKR 0.00/);
+});

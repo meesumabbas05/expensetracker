@@ -22,18 +22,34 @@ export function loans(rows, account) {
   const balances = new Map();
   for (const r of rows.filter(r => r.account === account && ['lend', 'borrow', 'collect', 'repay'].includes(r.kind))) {
     const side = ['lend', 'collect'].includes(r.kind) ? 'lent' : 'borrowed';
-    const key = `${side}:${r.description.toLowerCase()}`;
-    const old = balances.get(key) || { side, person: r.description, amount: 0 };
+    const person = r.description.trim();
+    const key = `${side}:${person.toLowerCase()}`;
+    const old = balances.get(key) || { side, person, amount: 0 };
     old.amount += ['lend', 'borrow'].includes(r.kind) ? r.amount : -r.amount;
     balances.set(key, old);
   }
   return [...balances.values()].filter(r => r.amount !== 0);
 }
 
-export function categorySummary(rows, account, month, category) {
-  const entries = rows.filter(r => r.account === account && r.month === month && r.category === category);
-  const limit = entries.filter(r => r.kind === 'budget').at(-1)?.amount ?? null;
-  const spending = entries.filter(r => r.kind === 'expense');
+export function categorySummary(rows, account, month, category, definitions = []) {
+  const entries = rows.filter(r => r.account === account && r.month === month);
+
+  const limit = entries.filter(r => r.kind === 'budget' && r.category.toLowerCase() === category.toLowerCase()).at(-1)?.amount ?? null;
+  const spending = entries.filter(r => {
+    if (!['expense', 'lend', 'repay'].includes(r.kind)) return false;
+    const definition = definitions.find(d => d.name.toLowerCase() === r.category.toLowerCase());
+    return (definition?.source || r.category).toLowerCase() === category.toLowerCase();
+  });
   const used = spending.reduce((n, r) => n + r.amount, 0);
   return { limit, used, remaining: limit === null ? null : limit - used, spending };
+}
+
+export function categoryDefinitions(rows, account, config) {
+  const definitions = config.categories.map(name => ({ name: name.trim(), source: Object.values(config.categoryBudgets).includes(name.trim()) ? name.trim() : 'Budget' }));
+  for (const row of rows.filter(r => r.account === account && r.kind === 'category')) {
+    const definition = JSON.parse(row.description);
+    if (typeof definition.source !== 'string' || !definition.source.trim()) throw new Error('Invalid category definition');
+    definitions.push({ name: row.category.trim(), source: definition.source.trim() });
+  }
+  return definitions;
 }

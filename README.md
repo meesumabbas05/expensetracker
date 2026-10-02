@@ -6,7 +6,7 @@ A private Node.js bot using whatsapp-web.js, Google Sheets, and optional Gemini 
 
 | Message | Result |
 | --- | --- |
-| `expense 400` | Asks where/why, then a category number (1–10) |
+| `expense 400` | Asks where/why, then a category number (starts with 1–10) |
 | `expense 4000 dinner at a restaurant` | Gemini suggests place and category; asks for confirmation |
 | `household expense 400 groceries` | Uses the shared household account |
 | `set budget 50000` | Sets/updates your current month's limit |
@@ -29,10 +29,20 @@ Each allowlisted sender can write their own account and the household account; b
 
 Months start on the 1st in `TIMEZONE`. Budget updates never erase spending and do not carry into the next month. **Used = expenses + money lent + borrowed-money repayments.** Borrowing and collecting lent money do not affect used; collections do not refund the original budget expenditure. Personal and household accounts are separate. Repayments cannot exceed the outstanding balance. Reuse the same counterparty spelling; balances span months. Budgets may go negative when exceeded. Transactions are dated when confirmed. Deletion/editing and automatic monthly budget renewal are not implemented.
 
+## Custom categories and funding
+
+- `add Brownzie loan` creates a category named Brownzie funded by the budget named loan. If loan has no current-month limit, the bot asks for its amount. These entries are expenses; lending/borrowing still use the separate `lend`/`borrow` commands. A budget named loan does not itself record borrowed money.
+- `add Brownzie` asks whether it needs a separate budget, should use another budget. For shared funding, it asks which budget pays for it; `main` means the overall personal/household budget.
+- `add Brownzie shopping` links it to shopping. `add Brownzie Gifts` links it to Gifts and asks for a monthly amount if that budget is not set. For multiword names use `add category Pet supplies` (guided), or `add Pet supplies from Pet fund`.
+- `set Gifts budget 1000` updates a named monthly limit; `get Gifts budget detail` includes all categories funded by it. Category limits are subsets of the overall spending total, not additional spending.
+- Prefix creation with `household`, e.g. `household add Brownzie loan`. Personal categories stay personal; household categories are shared. Send `categories` or `household categories` to inspect funding and menu numbers. Additional categories start at 11; Gemini also sees the expanded list. `expense 100 Brownzie` directly selects that category.
+
+Definitions persist in the same Ledger as `category` rows with zero `AmountMinor` and a JSON funding description; leave these rows intact. They are excluded from transaction reports and spending. Definitions are permanent across months; limits remain monthly. Funding cannot currently be reassigned after creation. Category names are case-insensitively unique per account. User-entered values and configuration strings are trimmed at their beginning and end. Expense descriptions retain the stated place or use case. Every expense counts toward its funding budget and the overall budget, once in each report.
+
 ## Local setup
 
 1. Install Node.js 22+, clone this repo, run `npm ci`, and copy `.env.example` to `.env`.
-2. Create a Google Cloud project, enable the **Google Sheets API**, create a service account and JSON key. Create an empty Google spreadsheet, share it with the service-account email as **Editor**, and share it privately with your household. Set its ID and the entire JSON key in `.env`. The JSON can span multiple lines inside single quotes: The bot creates a `Ledger` tab; keep its headers and machine-format rows intact. `AmountMinor` stores cents (400 means 4.00). Use another tab for custom formulas/views.
+2. Create a Google Cloud project, enable the **Google Sheets API**, create a service account and JSON key. Create an empty Google spreadsheet, share it with the service-account email as **Editor**, and share it privately with your household. Set its ID and the entire JSON key in `.env`. The JSON can span multiple lines inside single quotes: The bot creates a `Ledger` tab; keep its headers and machine-format rows intact. `AmountMinor` stores cents (400 means 4.00); category-definition rows use zero. Use another tab for custom formulas/views.
 
    ```dotenv
    GOOGLE_SERVICE_ACCOUNT_JSON='{

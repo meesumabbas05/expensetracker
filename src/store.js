@@ -15,14 +15,14 @@ export class SheetStore {
   async rows() {
     const { data } = await this.api.spreadsheets.values.get({ spreadsheetId: this.id, range: 'Ledger!A2:J' });
     return (data.values || []).map(r => {
-      if (r.length !== 10 || !Number.isSafeInteger(Number(r[7])) || Number(r[7]) <= 0 || !['expense', 'budget', 'lend', 'borrow', 'collect', 'repay'].includes(r[6]) || !/^\d{4}-\d{2}$/.test(r[3])) throw new Error('Invalid ledger row');
-      return { id: r[0], timestamp: r[1], date: r[2], month: r[3], account: r[4], actor: r[5], kind: r[6], amount: Number(r[7]), description: r[8], category: r[9] };
+      if (r.length !== 10 || !Number.isSafeInteger(Number(r[7])) || (r[6] === 'category' ? Number(r[7]) !== 0 : Number(r[7]) <= 0) || !['expense', 'budget', 'lend', 'borrow', 'collect', 'repay', 'category'].includes(r[6]) || !/^\d{4}-\d{2}$/.test(r[3])) throw new Error('Invalid ledger row');
+      return { id: r[0], timestamp: r[1], date: r[2], month: r[3], account: r[4], actor: r[5], kind: r[6], amount: Number(r[7]), description: r[8].trim(), category: r[9].trim() };
     });
   }
   async append(r) {
     // Read before append makes redelivery/restarts idempotent after uncertain writes.
     if ((await this.rows()).some(x => x.id === r.id)) return false;
-    await this.api.spreadsheets.values.append({ spreadsheetId: this.id, range: 'Ledger!A:J', valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: [[r.id, r.timestamp, r.date, r.month, r.account, r.actor, r.kind, r.amount, r.description, r.category]] } });
+    await this.api.spreadsheets.values.append({ spreadsheetId: this.id, range: 'Ledger!A:J', valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: [[r.id, r.timestamp, r.date, r.month, r.account, r.actor, r.kind, r.amount, r.description.trim(), r.category.trim()]] } });
     return true;
   }
 }
