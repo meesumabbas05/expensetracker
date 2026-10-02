@@ -8,10 +8,9 @@ export class Bot {
   fmt(n) { return money(n, this.config.currency); }
   menu(categories = this.config.categories) { return categories.map((c, i) => `${i + 1}. ${c}`).join('\n'); }
   help() {
-    return `Commands (positive amounts, up to 2 decimals):\nexpense 400\nexpense 4000 dinner at a restaurant\nexpense 100 Brownzie\nexpense <amount> <description> | <category>\nset budget 50000\nset household budget 80000\nset shopping budget 10000 / set dine-out budget 5000\nset <budget name> budget <amount>\nbudget — your personal budget\nbudget <name> — one funding budget\nbudget detail <name> — remaining, totals and entries by category\nbudget detail — personal details\nbudget all — each budget separately\nbudget all detail — all entries grouped by budget and category\nget budget / get budget detail (legacy aliases)\ntotal <configured name or ID> / total household\nlend 1000 to Alex / borrow 1000 from Alex\ncollect 500 from Alex / repay 500 to Alex\nloans / household loans\nadd <category> — choose separate or existing funding\nadd <category> household / add <category> loan\nadd <category> <budget>\nadd category <multiword category name>\nadd <category> from <multiword budget name>\ncategories\ncancel / help expense / help expenses\nReply yes to save pending entries. Household funding is shared; other budgets belong to the sender. Each expense uses one funding budget. Months start on the 1st; budget updates retain spending.`;
+    return `Commands (positive amounts, up to 2 decimals):\nexpense 400\ngemini <request> — explicitly translate a request into a command\nexpense 4000 dinner at a restaurant\nexpense 100 Brownzie\nexpense <amount> <description> | <category>\nset budget 50000\nset household budget 80000\nset shopping budget 10000 / set dine-out budget 5000\nset <budget name> budget <amount>\nbudget — your personal budget\nbudget <name> — one funding budget\nbudget detail <name> — remaining, totals and entries by category\nbudget detail — personal details\nbudget all — each budget separately\nbudget all detail — all entries grouped by budget and category\nget budget / get budget detail (legacy aliases)\ntotal <configured name or ID> / total household\nlend 1000 to Alex / borrow 1000 from Alex\ncollect 500 from Alex / repay 500 to Alex\nloans / household loans\nadd <category> — choose separate or existing funding\nadd <category> household / add <category> loan\nadd <category> <budget>\nadd category <multiword category name>\nadd <category> from <multiword budget name>\ncategories\ncancel / help expense / help expenses\nReply yes to save pending entries. Household funding is shared; other budgets belong to the sender. Each expense uses one funding budget. Months start on the 1st; budget updates retain spending.`;
   }
   async handle(actor, text, messageId, translated = false) {
-    const fullInput = text;
     text = text.trim();
     if (!text || text.length > 1000) return 'Send a command under 1,000 characters. Try help expense.';
     const lower = text.toLowerCase();
@@ -21,6 +20,8 @@ export class Bot {
     const rows = await this.store.rows();
     let pending = this.sessions[actor.id];
     if (pending && this.now().getTime() - pending.updated > this.config.ttl) { delete this.sessions[actor.id]; await this.saveSessions(); pending = null; }
+    const geminiRequest = text.match(/^gemini(?:\s+([\s\S]*))?$/i);
+    if (pending && geminiRequest) return 'Finish the pending entry or send cancel before using gemini.';
     if (pending) {
       if (pending.lastMessageId === messageId) return this.prompt(pending);
       if (pending.kind === 'category') return this.handleCategory(actor, text, messageId, pending, rows);
@@ -52,17 +53,16 @@ export class Bot {
     }
     if (rows.some(r => r.id === messageId)) return 'This entry has already been saved.';
     const categoryNames = categoryDefinitions(rows, actor.id, this.config).map(d => d.name);
-    const parsedCommand = parseCommand(text, categoryNames);
-    if (!parsedCommand?.valid) {
-      if (!translated) {
-        const command = await translateCommand(fullInput, this.config, this.help(), categoryNames, validGeneratedCommand);
-        if (command) {
-          const reply = await this.handle(actor, command, messageId, true);
-          return reply === null ? null : `Interpreted as: ${command}\n\n${reply}`;
-        }
-      }
-      return parsedCommand?.error || 'Could not match a supported expense command. Send help expense for examples.';
+    if (geminiRequest && !translated) {
+      const input = (geminiRequest[1] || '').trim();
+      if (!input) return 'Use gemini <request>, for example: gemini I spent 400 on dinner.';
+      const command = await translateCommand(input, this.config, this.help(), categoryNames, validGeneratedCommand);
+      if (!command) return 'Could not translate the Gemini request. Check Gemini configuration or use help expense to enter a command directly.';
+      const reply = await this.handle(actor, command, messageId, true);
+      return reply === null ? null : `Interpreted as: ${command}\n\n${reply}`;
     }
+    const parsedCommand = parseCommand(text, categoryNames);
+    if (!parsedCommand?.valid) return null;
     const month = dateParts(this.now(), this.config.timezone).month;
     const scope = lower.startsWith('household ') ? 'household' : actor.id;
     const scopedText = text.replace(/^household\s+/i, '').trim();
@@ -105,7 +105,7 @@ export class Bot {
       } catch (e) { if (e.message.startsWith('Use a positive') || e.message === 'Amount is out of range.') return e.message; throw e; }
     }
     const entry = text.match(/^(household\s+)?(expense|lend|borrow|collect|repay)\s+(\S+)(?:\s+(.+))?$/i);
-    if (!entry) return 'Unknown command. Send help expense for examples.';
+    if (!entry) return null;
     let value;
     try { value = amount(entry[3]); } catch (e) { return e.message; }
     const kind = entry[2].toLowerCase();

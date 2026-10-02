@@ -48,7 +48,7 @@ test('cancel, invalid categories, session expiry and timezone month boundary', a
   await send('cancel'); assert.deepEqual(sessions, {}); assert.equal(rows.length, 0);
   await send('expense 30'); sessions.one.updated = 0;
   assert.match(await send('help expense'), /Commands/);
-  assert.match(await send('yes'), /Unknown command/);
+  assert.equal(await send('yes'), null);
   assert.deepEqual(dateParts(new Date('2026-09-30T20:00:00Z'), 'Asia/Karachi'), { date: '2026-10-01', month: '2026-10' });
 });
 test('uncertain append succeeds once and retains confirmation for retry', async () => {
@@ -236,9 +236,9 @@ test('natural language is translated once, validated and dispatched with confirm
       calls++; request = JSON.parse(options.body);
       return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '{"command":"expense 400 dinner at Restaurant | Dine-out"}' }] } }] }) };
     };
-    const input = '  I spent 400 having dinner at Restaurant  ';
+    const input = '  GEMINI I spent 400 having dinner at Restaurant  ';
     assert.match(await send(input), /Interpreted as: expense 400 dinner at Restaurant \| Dine-out/);
-    assert.equal(request.contents[0].parts[0].text, input);
+    assert.equal(request.contents[0].parts[0].text, 'I spent 400 having dinner at Restaurant');
     assert.ok(request.systemInstruction.parts[0].text.includes(bot.help()));
     assert.equal(rows.length, 0);
     await send('yes');
@@ -253,8 +253,29 @@ test('invalid Gemini output gets exactly three retries, no recursive calls or wr
   try {
     let calls = 0;
     global.fetch = async () => { calls++; return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '{"command":"do an unsupported thing"}' }] } }] }) }; };
-    assert.match(await send('please do something'), /Could not match/);
+    assert.match(await send('gemini please do something'), /Could not translate/);
     assert.equal(calls, 4); assert.equal(rows.length, 0); assert.deepEqual(bot.sessions, {});
     assert.equal(await send('help'), null); assert.equal(calls, 4);
+  } finally { global.fetch = original; }
+});
+
+test('unrecognized text is ignored and only the gemini prefix invokes the API', async () => {
+  const original = global.fetch;
+  const { bot, send, rows } = setup();
+  bot.config = { ...config, geminiEnabled: true, geminiKey: 'test-only-placeholder' };
+  try {
+    let calls = 0; let input;
+    global.fetch = async (_url, options) => {
+      calls++; input = JSON.parse(options.body).contents[0].parts[0].text;
+      return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '{"command":"budget"}' }] } }] }) };
+    };
+    for (const text of ['hello', 'I spent 400 on dinner', 'please use gemini', 'geminix budget', 'help', 'expense 0 food']) assert.equal(await send(text), null);
+    assert.equal(calls, 0); assert.equal(rows.length, 0);
+    assert.match(await send('gemini'), /Use gemini/); assert.equal(calls, 0);
+    assert.match(await send(' GEMINI   show my budget '), /Interpreted as: budget/);
+    assert.equal(calls, 1); assert.equal(input, 'show my budget');
+    await send('expense 10');
+    assert.match(await send('gemini show my budget'), /Finish the pending/);
+    assert.equal(calls, 1);
   } finally { global.fetch = original; }
 });
