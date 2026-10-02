@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*.json
+*service-account*.json
+.wwebjs_auth/
+.wwebjs_cache/
+data/
+*.log
+coverage/
