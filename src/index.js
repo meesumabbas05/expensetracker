@@ -6,6 +6,7 @@ import qr from 'qrcode-terminal';
 import { readConfig } from './config.js';
 import { SheetStore } from './store.js';
 import { Bot } from './bot.js';
+async function main() {
 const config = readConfig();
 await mkdir(config.dataDir, { recursive: true, mode: 0o700 });
 const sessionPath = path.resolve(config.dataDir, 'sessions.json');
@@ -49,3 +50,6 @@ client.on('message', msg => {
 });
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, async () => { await queue; await client.destroy(); process.exit(0); });
 await client.initialize();
+
+}
+main().catch(() => { console.error('Startup failed. Check environment configuration, Sheets access and Chromium installation privately.'); process.exit(1); });
