@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Bot } from '../src/bot.js';
 import { amount, summary, dateParts, loans } from '../src/domain.js';
-const config = { categories: ['House','Groceries','Fuel','Dine-out','Sports','Utilities','Shopping','Health','Travel','Other'], users: [{ id: 'one', name: 'Person One' }, { id: 'two', name: 'Person Two' }], timezone: 'Asia/Karachi', currency: 'PKR', ttl: 900000, geminiEnabled: false };
+const config = { categories: ['House','Groceries','Fuel','Dine-out','Sports','Utilities','Shopping','Health','Travel','Other'], users: [{ id: 'one', name: 'Person One' }, { id: 'two', name: 'Person Two' }], timezone: 'Asia/Karachi', currency: 'PKR', ttl: 900000, categoryBudgets: { shopping: 'Shopping', 'dine-out': 'Dine-out' }, geminiEnabled: false };
 function setup() {
   const rows = []; const sessions = {};
   const store = { rows: async () => rows, append: async r => { if (!rows.some(x => x.id === r.id)) rows.push(r); } };
@@ -59,4 +59,20 @@ test('uncertain append succeeds once and retains confirmation for retry', async 
   await send('expense 10 food'); await send('2');
   await assert.rejects(send('yes'));
   await send('yes'); assert.equal(rows.length, 1);
+});
+
+test('shopping and dine-out limits are independent subsets of main budget', async () => {
+  const { send, rows } = setup();
+  await send('set budget 1000'); await send('set shopping budget 300'); await send('set dine-out budget 200');
+  await send('expense 100 shoes'); await send('7'); await send('yes');
+  await send('expense 50 dinner'); await send('4'); await send('yes');
+  assert.equal(summary(rows, 'one', '2026-10').limit, 100000);
+  assert.equal(summary(rows, 'one', '2026-10').used, 15000);
+  assert.match(await send('get shopping budget'), /Remaining: PKR 200.00/);
+  assert.match(await send('get dine-out budget detail'), /dinner/);
+  await send('set shopping budget 400');
+  assert.match(await send('get shopping budget'), /Remaining: PKR 300.00/);
+  await send('set household shopping budget 600', config.users[1]);
+  assert.match(await send('get household shopping budget'), /Budget: PKR 600.00/);
+  assert.match(await send('get shopping budget', config.users[1]), /Budget: not set/);
 });

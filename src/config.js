@@ -7,10 +7,12 @@ export function readConfig(env = process.env) {
   const aliases = users.flatMap(u => [u.id.toLowerCase(), u.name.toLowerCase()]);
   if (users.some((u, i) => users.some((v, j) => i !== j && [u.id.toLowerCase(), u.name.toLowerCase()].some(a => [v.id.toLowerCase(), v.name.toLowerCase()].includes(a)))) || aliases.includes('household')) throw new Error('Ambiguous user names');
   if (categories.length !== 10 || categories.some(c => typeof c !== 'string' || !c.trim() || c.length > 60) || new Set(categories.map(c => c.toLowerCase())).size !== 10) throw new Error('Exactly 10 unique categories required');
+  const categoryBudgets = { shopping: env.SHOPPING_CATEGORY || 'Shopping', 'dine-out': env.DINE_OUT_CATEGORY || 'Dine-out' };
+  if (Object.values(categoryBudgets).some(c => !categories.includes(c)) || categoryBudgets.shopping === categoryBudgets['dine-out']) throw new Error('Category budget labels must match two distinct configured categories');
   const timezone = env.TIMEZONE || 'Asia/Karachi';
   new Intl.DateTimeFormat('en', { timeZone: timezone }).format();
   if (!env.GOOGLE_SHEET_ID || !env.GOOGLE_SERVICE_ACCOUNT_JSON) throw new Error('Google Sheets configuration missing');
   const ttl = Number(env.SESSION_TTL_MINUTES || 15);
   if (!Number.isFinite(ttl) || ttl <= 0) throw new Error('Invalid session TTL');
-  return { users, categories, timezone, currency: env.CURRENCY || 'PKR', sheetId: env.GOOGLE_SHEET_ID, credentials: JSON.parse(env.GOOGLE_SERVICE_ACCOUNT_JSON), dataDir: env.DATA_DIR || './data', clientId: env.WHATSAPP_CLIENT_ID || 'expense-tracker', chromePath: env.CHROME_EXECUTABLE_PATH || undefined, noSandbox: env.CHROME_NO_SANDBOX === 'true', showQr: env.SHOW_QR === 'true', ttl: ttl * 60000, geminiKey: env.GEMINI_API_KEY, geminiModel: env.GEMINI_MODEL || 'gemini-2.5-flash', geminiEnabled: env.GEMINI_ENABLED !== 'false' };
+  return { users, categories, categoryBudgets, timezone, currency: env.CURRENCY || 'PKR', sheetId: env.GOOGLE_SHEET_ID, credentials: JSON.parse(env.GOOGLE_SERVICE_ACCOUNT_JSON), dataDir: env.DATA_DIR || './data', clientId: env.WHATSAPP_CLIENT_ID || 'expense-tracker', chromePath: env.CHROME_EXECUTABLE_PATH || undefined, noSandbox: env.CHROME_NO_SANDBOX === 'true', showQr: env.SHOW_QR === 'true', ttl: ttl * 60000, geminiKey: env.GEMINI_API_KEY, geminiModel: env.GEMINI_MODEL || 'gemini-2.5-flash', geminiEnabled: env.GEMINI_ENABLED !== 'false' };
 }

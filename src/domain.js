@@ -12,7 +12,7 @@ export function dateParts(date, timezone) {
 export const money = (minor, currency) => `${currency} ${(minor / 100).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 export function summary(rows, account, month) {
   const entries = rows.filter(r => r.account === account && r.month === month);
-  const budgets = entries.filter(r => r.kind === 'budget');
+  const budgets = entries.filter(r => r.kind === 'budget' && r.category === 'Budget');
   const limit = budgets.at(-1)?.amount ?? null;
   const spending = entries.filter(r => ['expense', 'lend', 'repay'].includes(r.kind));
   const used = spending.reduce((n, r) => n + r.amount, 0);
@@ -28,4 +28,12 @@ export function loans(rows, account) {
     balances.set(key, old);
   }
   return [...balances.values()].filter(r => r.amount !== 0);
+}
+
+export function categorySummary(rows, account, month, category) {
+  const entries = rows.filter(r => r.account === account && r.month === month && r.category === category);
+  const limit = entries.filter(r => r.kind === 'budget').at(-1)?.amount ?? null;
+  const spending = entries.filter(r => r.kind === 'expense');
+  const used = spending.reduce((n, r) => n + r.amount, 0);
+  return { limit, used, remaining: limit === null ? null : limit - used, spending };
 }

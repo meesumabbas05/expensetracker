@@ -11,6 +11,8 @@ A private Node.js bot using whatsapp-web.js, Google Sheets, and optional Gemini 
 | `household expense 400 groceries` | Uses the shared household account |
 | `set budget 50000` | Sets/updates your current month's limit |
 | `set household budget 80000` | Sets/updates the shared limit |
+| `set shopping budget 10000` / `set dine-out budget 5000` | Sets separate monthly category limits |
+| `get shopping budget` / `get dine-out budget detail` | Category limit, used, remaining, and optional entries |
 | `get budget` / `get budget detail` | Limit, used, remaining; detail adds category totals and entries |
 | `get household budget` / `get household budget detail` | Shared budget reports |
 | `total <name or ID>` / `total household` | All current-month transactions for that account |
@@ -18,6 +20,8 @@ A private Node.js bot using whatsapp-web.js, Google Sheets, and optional Gemini 
 | `collect 500 from Alex` / `repay 500 to Alex` | Reduces outstanding loans for that exact name (case-insensitive) |
 | `loans` / `household loans` | Outstanding balances across all months |
 | `yes` / `cancel` / `help` | Save pending entry, discard, or show commands |
+
+Use `set household shopping budget 10000` and `get household dine-out budget detail` for shared category limits. The main budget report also shows both category budgets. Shopping/dine-out expenses count in their category limit **and** the main limit; setting category limits does not change the main limit. `SHOPPING_CATEGORY` and `DINE_OUT_CATEGORY` must match the labels in your ten categories.
 
 Prefix loan commands with `household` for shared loans. Amounts are positive, with up to two decimal places; currency comes from configuration. Expenses and loans require `yes` before saving. To correct a suggestion, cancel and use the guided `expense <amount>` flow. Gemini failures fall back to the numbered menu.
 

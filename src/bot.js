@@ -1,4 +1,4 @@
-import { amount, dateParts, money, summary, loans } from './domain.js';
+import { amount, dateParts, money, summary, loans, categorySummary } from './domain.js';
 import { extract } from './extract.js';
 export class Bot {
   constructor(config, store, sessions, saveSessions, now = () => new Date()) {
@@ -7,7 +7,7 @@ export class Bot {
   fmt(n) { return money(n, this.config.currency); }
   menu() { return this.config.categories.map((c, i) => `${i + 1}. ${c}`).join('\n'); }
   help() {
-    return `Commands (amounts have up to 2 decimals):\nexpense 400\nexpense 4000 dinner at a restaurant\nhousehold expense 400 groceries\nset budget 50000\nset household budget 80000\nget budget / get budget detail\nget household budget / get household budget detail\ntotal <configured name or ID> / total household\nlend 1000 to Alex / borrow 1000 from Alex\ncollect 500 from Alex / repay 500 to Alex\nhousehold lend 1000 to Alex (also borrow, collect, repay)\nloans / household loans\ncancel / help\nConfirm entries with yes; no or cancel discards them. Calendar months start on the 1st. Loan balances span all months.`;
+    return `Commands (amounts have up to 2 decimals):\nexpense 400\nexpense 4000 dinner at a restaurant\nhousehold expense 400 groceries\nset budget 50000\nset household budget 80000\nget budget / get budget detail\nset shopping budget 10000 / set dine-out budget 5000\nget shopping budget / get dine-out budget detail\n(Also: set/get household shopping/dine-out budget)\nget household budget / get household budget detail\ntotal <configured name or ID> / total household\nlend 1000 to Alex / borrow 1000 from Alex\ncollect 500 from Alex / repay 500 to Alex\nhousehold lend 1000 to Alex (also borrow, collect, repay)\nloans / household loans\ncancel / help\nConfirm entries with yes; no or cancel discards them. Calendar months start on the 1st. Loan balances span all months.`;
   }
   async handle(actor, text, messageId) {
     text = text.trim();
@@ -46,12 +46,19 @@ export class Bot {
     const rows = await this.store.rows();
     if (rows.some(r => r.id === messageId)) return 'This entry has already been saved.';
     const month = dateParts(this.now(), this.config.timezone).month;
-    const budgetMatch = lower.match(/^get (household )?budget( detail)?$/);
+    const budgetMatch = lower.match(/^get (household )?(shopping |dine-out )?budget( detail)?$/);
     if (budgetMatch) {
       const account = budgetMatch[1] ? 'household' : actor.id;
-      const s = summary(rows, account, month);
-      let out = `${account} · ${month}\nBudget: ${s.limit === null ? 'not set' : this.fmt(s.limit)}\nUsed: ${this.fmt(s.used)}\nRemaining: ${s.remaining === null ? 'set a budget first' : this.fmt(s.remaining)}`;
-      if (budgetMatch[2]) {
+      const category = budgetMatch[2] ? this.config.categoryBudgets[budgetMatch[2].trim()] : null;
+      const s = category ? categorySummary(rows, account, month, category) : summary(rows, account, month);
+      let out = `${account}${category ? ` · ${category}` : ''} · ${month}\nBudget: ${s.limit === null ? 'not set' : this.fmt(s.limit)}\nUsed: ${this.fmt(s.used)}\nRemaining: ${s.remaining === null ? 'set a budget first' : this.fmt(s.remaining)}`;
+      if (!category) {
+        for (const [key, label] of Object.entries(this.config.categoryBudgets)) {
+          const c = categorySummary(rows, account, month, label);
+          out += `\n${key}: limit ${c.limit === null ? 'not set' : this.fmt(c.limit)}, used ${this.fmt(c.used)}, remaining ${c.remaining === null ? 'not set' : this.fmt(c.remaining)}`;
+        }
+      }
+      if (budgetMatch[3]) {
         const categories = new Map();
         for (const r of s.spending) categories.set(r.category, (categories.get(r.category) || 0) + r.amount);
         out += '\n\nBy category:\n' + ([...categories].map(([c, v]) => `${c}: ${this.fmt(v)}`).join('\n') || 'No spending.');
@@ -71,11 +78,11 @@ export class Bot {
       const balances = loans(rows, account);
       return `${account} · outstanding loans (all months)\n` + (balances.map(l => `${l.person}: ${l.side === 'lent' ? 'owed to you' : 'you owe'} ${this.fmt(l.amount)}`).join('\n') || 'No outstanding loans.');
     }
-    const set = text.match(/^set (household )?budget (\S+)$/i);
+    const set = text.match(/^set (household )?(shopping |dine-out )?budget (\S+)$/i);
     if (set) {
       try {
-        await this.store.append({ id: messageId, timestamp: this.now().toISOString(), ...dateParts(this.now(), this.config.timezone), account: set[1] ? 'household' : actor.id, actor: actor.id, kind: 'budget', amount: amount(set[2]), description: 'Monthly budget', category: 'Budget' });
-        return `Monthly budget updated to ${this.fmt(amount(set[2]))}. Existing spending is retained.`;
+        await this.store.append({ id: messageId, timestamp: this.now().toISOString(), ...dateParts(this.now(), this.config.timezone), account: set[1] ? 'household' : actor.id, actor: actor.id, kind: 'budget', amount: amount(set[3]), description: 'Monthly budget', category: set[2] ? this.config.categoryBudgets[set[2].trim().toLowerCase()] : 'Budget' });
+        return `Monthly budget updated to ${this.fmt(amount(set[3]))}. Existing spending is retained.`;
       } catch (e) { if (e.message.startsWith('Use a positive') || e.message === 'Amount is out of range.') return e.message; throw e; }
     }
     const entry = text.match(/^(household )?(expense|lend|borrow|collect|repay) (\S+)(?:\s+(.+))?$/i);
