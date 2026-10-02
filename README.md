@@ -6,41 +6,38 @@ A private Node.js bot using whatsapp-web.js, Google Sheets, and optional Gemini 
 
 | Message | Result |
 | --- | --- |
-| `expense 400` | Asks where/why, then a category number (starts with 1–10) |
-| `expense 4000 dinner at a restaurant` | Gemini suggests place and category; asks for confirmation |
-| `household expense 400 groceries` | Uses the shared household account |
-| `set budget 50000` | Sets/updates your current month's limit |
-| `set household budget 80000` | Sets/updates the shared limit |
-| `set shopping budget 10000` / `set dine-out budget 5000` | Sets separate monthly category limits |
-| `get shopping budget` / `get dine-out budget detail` | Category limit, used, remaining, and optional entries |
-| `get budget` / `get budget detail` | Limit, used, remaining; detail adds category totals and entries |
-| `get household budget` / `get household budget detail` | Shared budget reports |
-| `total <name or ID>` / `total household` | All current-month transactions for that account |
-| `lend 1000 to Alex` / `borrow 1000 from Alex` | Records lending/borrowing separately |
-| `collect 500 from Alex` / `repay 500 to Alex` | Reduces outstanding loans for that exact name (case-insensitive) |
-| `loans` / `household loans` | Outstanding balances across all months |
+| `expense 400` | Asks where/why, then a numbered category |
+| `expense 4000 dinner at a restaurant` | Gemini suggests place/category; asks for confirmation |
+| `expense 100 Brownzie` | Directly selects the named category and its funding budget |
+| `add Brownzie household` | Links Brownzie to the shared household funding budget |
+| `add Brownzie loan` | Links Brownzie to a budget named loan (not a lending transaction) |
+| `add Brownzie` | Asks separate budget or another funding budget; then asks the amount/source |
+| `add Brownzie NewFund` | Creates/uses NewFund and asks its limit if not set this month |
+| `add category Pet supplies` / `add Pet supplies from Pet fund` | Guided creation or explicit multiword names |
+| `categories` | Lists categories, menu numbers and funding budgets |
+| `set budget 50000` | Updates your personal monthly limit |
+| `set household budget 80000` | Updates the shared household monthly limit |
+| `set shopping budget 10000` / `set dine-out budget 5000` | Updates separate funding budgets |
+| `set <name> budget <amount>` | Creates/updates a named monthly funding budget |
+| `budget` | Your personal limit, used and remaining |
+| `budget <name>` | One funding budget, e.g. `budget household` or `budget loan` |
+| `budget detail` / `budget detail <name>` | Personal/named remaining and totals, plus full expenses grouped by category |
+| `budget all` | Each configured user's personal/named budgets and the shared household budget |
+| `budget all detail` | Full expense lists grouped by budget, then category, with limits/totals/remaining |
+| `total <configured name or ID>` / `total household` | Current-month transactions by sender or household funding |
+| `lend 1000 to Alex` / `borrow 1000 from Alex` | Separate lending/borrowing ledger |
+| `collect 500 from Alex` / `repay 500 to Alex` | Reduces outstanding balances for that name (case-insensitive) |
+| `loans` / `household loans` | Outstanding personal/shared loans across all months |
 | `yes` / `cancel` | Save pending entry or discard it |
-| `help expense` / `help expenses` | Show the full list of supported commands; pending entries stay intact |
+| `help expense` / `help expenses` | Full command list; pending entries stay intact |
 
-Use `set household shopping budget 10000` and `get household dine-out budget detail` for shared category limits. The main budget report also shows both category budgets. Shopping/dine-out expenses count in their category limit **and** the main limit; setting category limits does not change the main limit. `SHOPPING_CATEGORY` and `DINE_OUT_CATEGORY` must match the labels in your ten categories.
+**A category is a label; a budget is its funding source.** Each expense consumes exactly one funding budget. Household is one shared funding budget: use `add Brownzie household`, not `household add Brownzie loan`. Household-funded categories are available to both users; rows still retain who paid. Other category definitions and named budgets belong to their creator. `budget <configured user name or ID>` also queries that person's personal budget. The older `get budget`, `get household budget`, and `get <name> budget detail` syntax remains an alias.
 
-Prefix loan commands with `household` for shared loans. Amounts are positive, with up to two decimal places; currency comes from configuration. Expenses and loans require `yes` before saving. To correct a suggestion, cancel and use the guided `expense <amount>` flow. Gemini failures fall back to the numbered menu.
+Shopping and dine-out use their own funding budgets and are excluded from the personal budget's used amount. Custom separate budgets behave the same way. A category using `personal` (also `main`/`overall`) consumes your personal budget. `SHOPPING_CATEGORY` and `DINE_OUT_CATEGORY` must match labels in your ten starting categories. Additional categories start at menu item 11, and Gemini receives the expanded list.
 
-Each allowlisted sender can write their own account and the household account; both can view every configured account's totals. Groups and other senders are ignored. Ten configurable categories default to house expenses, groceries, fuel, dine-out, sports, utilities, shopping, health, travel, and other.
+Months start on the 1st in `TIMEZONE`. Setting a limit mid-month retains all spending; limits do not carry into the next month. Each funding budget's **used = expenses + money lent + borrowed-money repayments assigned to it**. Ordinary `lend`/`repay` commands consume your personal budget; prefix loan commands with `household` for shared funding. Borrowing/collecting do not affect used or refund previous budget expenditure. Repayments cannot exceed the outstanding balance. Reuse the same counterparty spelling; loan balances span months. A budget named loan is only a funding label and does not create a debt record.
 
-Months start on the 1st in `TIMEZONE`. Budget updates never erase spending and do not carry into the next month. **Used = expenses + money lent + borrowed-money repayments.** Borrowing and collecting lent money do not affect used; collections do not refund the original budget expenditure. Personal and household accounts are separate. Repayments cannot exceed the outstanding balance. Reuse the same counterparty spelling; balances span months. Budgets may go negative when exceeded. Transactions are dated when confirmed. Deletion/editing and automatic monthly budget renewal are not implemented.
-
-## Custom categories and funding
-
-- `add Brownzie loan` creates a category named Brownzie funded by the budget named loan. If loan has no current-month limit, the bot asks for its amount. These entries are expenses; lending/borrowing still use the separate `lend`/`borrow` commands. A budget named loan does not itself record borrowed money.
-- `add Brownzie` asks whether it needs a separate budget, should use another budget. For shared funding, it asks which budget pays for it; `main` means the overall personal/household budget.
-- `add Brownzie shopping` links it to shopping. `add Brownzie Gifts` links it to Gifts and asks for a monthly amount if that budget is not set. For multiword names use `add category Pet supplies` (guided), or `add Pet supplies from Pet fund`.
-- `set Gifts budget 1000` updates a named monthly limit; `get Gifts budget detail` includes all categories funded by it. Category limits are subsets of the overall spending total, not additional spending.
-- Prefix creation with `household`, e.g. `household add Brownzie loan`. Personal categories stay personal; household categories are shared. Send `categories` or `household categories` to inspect funding and menu numbers. Additional categories start at 11; Gemini also sees the expanded list. `expense 100 Brownzie` directly selects that category.
-
-Definitions persist in the same Ledger as `category` rows with zero `AmountMinor` and a JSON funding description; leave these rows intact. They are excluded from transaction reports and spending. Definitions are permanent across months; limits remain monthly. Funding cannot currently be reassigned after creation. Category names are case-insensitively unique per account. User-entered values and configuration strings are trimmed at their beginning and end. Expense descriptions retain the stated place or use case. Every expense counts toward its funding budget and the overall budget, once in each report.
-
-Bare `help` is ignored by this bot so the existing solar bot can handle it. Use `help expense` or `help expenses` for expense commands.
+Amounts are positive with up to two decimals. Expenses/loans/category creation require `yes`; budget-limit commands update immediately. To correct a suggestion, cancel and use the guided expense flow. Budgets can show negative remaining when exceeded. Definitions persist in the Ledger as `category` rows with zero `AmountMinor` and JSON funding descriptions; preserve these rows. Categories are permanent across months; funding cannot currently be reassigned. Deletion/editing and automatic budget renewal are not implemented. Values are trimmed at their beginning/end. All allowlisted users can view all budget reports; other senders and groups are ignored. Bare `help` is ignored for the solar bot.
 
 ## Local setup
 

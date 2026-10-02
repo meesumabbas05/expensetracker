@@ -72,8 +72,8 @@ test('shopping and dine-out limits are independent subsets of main budget', asyn
   assert.match(await send('get dine-out budget detail'), /dinner/);
   await send('set shopping budget 400');
   assert.match(await send('get shopping budget'), /Remaining: PKR 300.00/);
-  await send('set household shopping budget 600', config.users[1]);
-  assert.match(await send('get household shopping budget'), /Budget: PKR 600.00/);
+  await send('set household budget 600', config.users[1]);
+  assert.match(await send('budget household'), /Budget: PKR 600.00/);
   assert.match(await send('get shopping budget', config.users[1]), /Budget: not set/);
 });
 
@@ -103,13 +103,13 @@ test('new named funding budget prompts for amount and keeps main budget separate
 });
 test('guided separate and main funding; household definitions persist in ledger', async () => {
   const { bot, send, sessions, rows } = setup();
-  await send('household add category   Pet supplies   '); await send('separate'); await send('400'); await send('yes');
-  await send('household expense 20 Pet supplies'); await send('yes');
-  assert.match(await send('get household Pet supplies budget'), /Remaining: PKR 380.00/);
+  await send('add Pet supplies from household'); await send('400'); await send('yes');
+  await send('expense 20 Pet supplies'); await send('yes');
+  assert.match(await send('budget household'), /Remaining: PKR 380.00/);
   await send('add Essentials'); await send('shared'); await send('main'); await send('yes');
   assert.match(await send('categories'), /Essentials → overall budget/);
   const restarted = new Bot(config, bot.store, sessions, async () => {}, bot.now);
-  assert.match(await restarted.handle(config.users[1], 'household categories', 'restart'), /Pet supplies/);
+  assert.match(await restarted.handle(config.users[0], 'categories', 'restart'), /Pet supplies/);
   assert.equal(rows.filter(r => r.kind === 'category').length, 2);
 });
 test('loan is a funding budget, never a lending transaction', async () => {
@@ -144,7 +144,7 @@ test('new budget setup can be cancelled; source totals and month rollover stay c
   await send('set budget 1000');
   await send('add Brownzie loan'); await send('300'); await send('yes');
   await send('expense 20 Brownzie'); await send('yes');
-  assert.match(await send('get main budget'), /Used: PKR 20.00/);
+  assert.match(await send('get main budget'), /Used: PKR 0.00/);
   assert.match(await send('get loan budget'), /Remaining: PKR 280.00/);
   bot.now = () => new Date('2026-11-02T12:00:00Z');
   assert.match(await send('categories'), /Brownzie/);
@@ -164,4 +164,48 @@ test('help expense and help expenses show all commands without disrupting pendin
     assert.equal(JSON.stringify(sessions), before);
   }
   assert.equal(rows.length, 0);
+});
+
+test('household funding is shared while budget shows only the senders personal funding', async () => {
+  const { send, rows } = setup();
+  await send('set budget 1000'); await send('set budget 2000', config.users[1]);
+  assert.match(await send('  add brownzie household  '), /monthly budget amount for household/);
+  await send('500'); await send('yes');
+  assert.match(await send('categories', config.users[1]), /brownzie → household/);
+  await send('expense 100 brownzie'); await send('yes');
+  await send('expense 50 brownzie', config.users[1]); await send('yes', config.users[1]);
+  await send('expense 25'); await send('personal food'); await send('2'); await send('yes');
+  assert.match(await send('budget'), /Used: PKR 25.00\nRemaining: PKR 975.00/);
+  assert.match(await send('budget', config.users[1]), /Used: PKR 0.00\nRemaining: PKR 2,000.00/);
+  assert.match(await send('budget household'), /Used: PKR 150.00\nRemaining: PKR 350.00/);
+  const detail = await send('budget detail household');
+  assert.match(detail, /Category: brownzie\nTotal: PKR 150.00/);
+  assert.match(detail, /by Person One/); assert.match(detail, /by Person Two/);
+  assert.doesNotMatch(detail, /personal food/);
+  assert.match(await send('total household'), /PKR 150.00/);
+  assert.equal(rows.find(r => r.kind === 'category').account, 'one');
+  assert.match(await send('household add test'), /Use add <category> household/);
+});
+test('budget all detail groups every funding budget and category without double counting', async () => {
+  const { send } = setup();
+  await send('set budget 500'); await send('set shopping budget 200');
+  await send('add Brownzie loan'); await send('300'); await send('yes');
+  await send('expense 20 Brownzie'); await send('yes');
+  await send('expense 30 shoes'); await send('7'); await send('yes');
+  await send('expense 10'); await send('fuel stop'); await send('3'); await send('yes');
+  assert.match(await send('budget'), /Used: PKR 10.00/);
+  assert.match(await send('budget loan'), /Used: PKR 20.00/);
+  const detail = await send('budget detail loan');
+  assert.match(detail, /Remaining: PKR 280.00/);
+  assert.match(detail, /Category: Brownzie\nTotal: PKR 20.00/);
+  assert.doesNotMatch(detail, /shoes/);
+  const all = await send('budget all detail');
+  assert.match(all, /Person One · shopping|Person One · Shopping/);
+  assert.match(all, /Person One · loan/); assert.match(all, /Person Two · personal/);
+  assert.match(all, /household/);
+  assert.equal(all.split(' · shoes · ').length - 1, 1);
+  assert.equal(all.split(' · Brownzie · ').length - 1, 1);
+  assert.equal(all.split(' · fuel stop · ').length - 1, 1);
+  await send('set loan budget 400');
+  assert.match(await send('budget detail loan'), /Remaining: PKR 380.00/);
 });
