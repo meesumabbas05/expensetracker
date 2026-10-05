@@ -4,10 +4,15 @@ set -euo pipefail
 stage=$1
 app=$2
 [[ "$stage" =~ ^/[a-zA-Z0-9_./-]+$ && "$app" =~ ^/[a-zA-Z0-9_./-]+$ && "$app" != / ]] || exit 1
+for required in node npm rsync pm2; do
+  if ! command -v "$required" >/dev/null 2>&1; then
+    echo "Missing deployment command: $required. Install it before deploying." >&2
+    exit 1
+  fi
+done
 mkdir -p "$app"
 chmod 700 "$app"
 app=$(cd "$app" && pwd -P)
-command -v pm2 >/dev/null
 pm2 ping >/dev/null
 # Use the deployment user's PM2 daemon and protect other applications.
 previous_process=$(pm2 jlist | node --input-type=module -e '

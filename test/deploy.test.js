@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -8,13 +8,14 @@ import { spawnSync } from 'node:child_process';
 const deployScript = path.resolve('scripts/deploy.sh');
 const ecosystem = readFileSync(new URL('../ecosystem.config.json', import.meta.url), 'utf8');
 
-function fixture({ previous = false, failStart = false, failInstall = false, foreignProcess = false } = {}) {
+function fixture({ previous = false, failStart = false, failInstall = false, foreignProcess = false, missingRsync = false } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'expense-deploy-'));
   const app = path.join(realpathSync(root), 'app');
   const stage = path.join(root, 'stage');
   const bin = path.join(root, 'bin');
   const stateFile = path.join(root, 'pm2-state.json');
   for (const dir of [app, stage, bin]) mkdirSync(dir);
+  symlinkSync(process.execPath, path.join(bin, 'node'));
   for (const dir of [app, stage]) {
     mkdirSync(path.join(dir, 'src'));
     mkdirSync(path.join(dir, 'node_modules'));
@@ -66,7 +67,7 @@ process.exit(code);
   writeFileSync(path.join(bin, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   return {
     app,
-    run: () => spawnSync('bash', [deployScript, stage, app], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, MOCK_PM2_STATE: stateFile, MOCK_FAIL_INSTALL: failInstall ? 'yes' : 'no' } }),
+    run: () => spawnSync('/bin/bash', [deployScript, stage, app], { encoding: 'utf8', env: { ...process.env, PATH: missingRsync ? bin : `${bin}:${process.env.PATH}`, MOCK_PM2_STATE: stateFile, MOCK_FAIL_INSTALL: failInstall ? 'yes' : 'no' } }),
     state: () => JSON.parse(readFileSync(stateFile, 'utf8')),
     cleanup: () => rmSync(root, { recursive: true, force: true })
   };
@@ -86,6 +87,20 @@ test('first PM2 deployment starts one instance and preserves existing applicatio
     assert.equal(readFileSync(path.join(f.app, '.env'), 'utf8'), 'NEW_CONFIG=true\n');
     assert.equal(readFileSync(path.join(f.app, 'data/sessions.json'), 'utf8'), 'preserved pending prompts');
     assert.ok(f.state().calls.some(c => c.command === 'save'));
+    checkOtherProject(f.state());
+  } finally { f.cleanup(); }
+});
+
+test('missing rsync fails before changing files or contacting PM2', () => {
+  const f = fixture({ previous: true, missingRsync: true });
+  try {
+    const result = f.run();
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Missing deployment command: rsync/);
+    assert.equal(readFileSync(path.join(f.app, 'src/config.js'), 'utf8'), 'old source');
+    assert.equal(readFileSync(path.join(f.app, '.env'), 'utf8'), 'OLD_CONFIG=true\n');
+    assert.equal(f.state().processes.find(p => p.name === 'expense-tracker').pm2_env.status, 'online');
+    assert.deepEqual(f.state().calls, []);
     checkOtherProject(f.state());
   } finally { f.cleanup(); }
 });
