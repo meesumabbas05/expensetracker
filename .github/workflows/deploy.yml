@@ -55,6 +55,6 @@ jobs:
           ssh_args=(-i "$private_dir/key" -p "$port" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$private_dir/known_hosts")
           stage="$DEPLOY_PATH/releases/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh "${ssh_args[@]}" "$SSH_USER@$SSH_HOST" "umask 077; mkdir -p '$stage'"
-          tar -czf "$private_dir/release.tgz" src scripts package.json package-lock.json
+          tar -czf "$private_dir/release.tgz" src scripts package.json package-lock.json ecosystem.config.json
           scp -i "$private_dir/key" -P "$port" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$private_dir/known_hosts" "$private_dir/release.tgz" "$private_dir/.env" "$SSH_USER@$SSH_HOST:$stage/"
           ssh "${ssh_args[@]}" "$SSH_USER@$SSH_HOST" "set -eu; trap 'rm -rf $stage' EXIT; cd '$stage'; tar -xzf release.tgz; bash scripts/deploy.sh '$stage' '$DEPLOY_PATH'"

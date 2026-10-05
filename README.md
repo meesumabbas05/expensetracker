@@ -1,6 +1,6 @@
 # Expense tracker
 
-A private Node.js bot using either WhatsApp Web (whatsapp-web.js) or Discord (discord.js), Google Sheets, and optional Gemini command translation. Select one transport with `BOT_TRANSPORT`; both use the same commands, account IDs and ledger. Runs as a separate systemd service on an existing Linux VM. No public web server or inbound application port is needed.
+A private Node.js bot using either WhatsApp Web (whatsapp-web.js) or Discord (discord.js), Google Sheets, and optional Gemini command translation. Select one transport with `BOT_TRANSPORT`; both use the same commands, account IDs and ledger. Runs as a single PM2 process on a Linux VM. No public web server or inbound application port is needed.
 
 ## Commands
 
@@ -102,14 +102,79 @@ Discord mode needs no Chromium, QR pairing or public application port. Only its 
 
 Only `gemini <request>` invokes Gemini. It receives the complete request after the prefix (trimmed at the edges), the exact command-help response, and existing category names. Unrecognized messages without this prefix are ignored without a reply or API call. `gemini` alone shows usage; finish or cancel a pending entry before using Gemini. A strict JSON schema requests only `{"command":"..."}`; the shared local parser validates the result before dispatch. Extra fields, unknown commands, multiple lines, invalid amounts, unknown explicit categories and fabricated confirmation replies are rejected. There is one initial generation plus **three retries** for invalid output, each with corrective feedback; no invalid attempt writes to Sheets. Authentication/quota/service errors return the local fallback immediately. Generated commands never recursively invoke Gemini. The reply shows `Interpreted as: ...` before the normal command result; expenses still require `yes`, while budget-limit commands update immediately, just like typed commands. If translation fails, use `help expense` and enter a supported command directly. Canonical commands such as `expense 4000 dinner at a restaurant` no longer invoke AI: they ask for a category unless the description is an exact category name or uses `| <category>`.
 
-## Oracle/Linux VM setup (one time)
+## First deployment on Oracle Ubuntu with PM2
 
-Use a dedicated app directory and the SSH user's own Node.js 22+ installation. Chromium and WhatsApp pairing are needed only for `BOT_TRANSPORT=whatsapp`. Install `rsync` for deployment. For WhatsApp on Ubuntu/Debian, install Chromium (`chromium` or `chromium-browser`, depending on the distribution); set `CHROME_EXECUTABLE_PATH` to its absolute path. Oracle ARM instances should use distribution Chromium, not Puppeteer's downloaded x86 browser. Installation differs by OS; see the [headless Linux guide](https://wwebjs.dev/guide/installation). Keep `CHROME_NO_SANDBOX=false` unless your environment requires otherwise.
+Run these commands in the Ubuntu VM's SSH terminal as the same user that will
+run GitHub deployments (usually `ubuntu`). First push the current code to GitHub.
 
-1. Put the repo in your chosen `DEPLOY_PATH`, install dependencies with `PUPPETEER_SKIP_DOWNLOAD=true npm ci`, and create a private `.env`. Use an absolute `DATA_DIR` outside release staging paths, or the default `./data` inside the app directory.
-2. For WhatsApp, pair once with the local setup command on the VM; never capture the QR in GitHub Actions logs. Stop the foreground bot after pairing.
-3. Copy `scripts/expense-tracker.service.example` to `/etc/systemd/system/expense-tracker.service`, replace its user, working directory and Node executable path. Run `sudo systemctl daemon-reload` and `sudo systemctl enable --now expense-tracker.service`. Use `sudo systemctl status expense-tracker.service` to check readiness. A service being active does not prove the selected transport is connected or Sheets is reachable.
-4. Give the deploy SSH user ownership of the app directory and narrowly scoped passwordless sudo for **only** `systemctl stop/start/is-active expense-tracker.service` (use the actual systemctl path from `command -v systemctl`). The workflow requires these commands; do not grant unrestricted sudo. Keep the existing chatbot in its own directory/service/session. Monitor memory when running two Chromium instances in WhatsApp mode.
+1. Install Node.js 22+ using the [NodeSource Ubuntu instructions](https://github.com/nodesource/distributions/blob/master/DEV_README.md), then install Git, rsync, and PM2:
+
+   ```bash
+   sudo apt update
+   sudo apt install -y git rsync
+   sudo npm install -g pm2
+   node -v
+   pm2 -v
+   ```
+
+   If PM2 is already installed for this user, reuse it. Discord mode needs no
+   Chromium installation. WhatsApp mode needs Chromium and one-time QR pairing;
+   use distribution Chromium on Oracle ARM VMs and set `CHROME_EXECUTABLE_PATH`.
+
+2. Clone your repository into a dedicated directory. For this repository:
+
+   ```bash
+   git clone https://github.com/meesumabbas05/expensetracker.git "$HOME/expensetracker"
+   cd "$HOME/expensetracker"
+   chmod 700 .
+   cp .env.example .env
+   chmod 600 .env
+   nano .env
+   ```
+
+   Populate the example with your credentials, user identities and transport.
+   In nano, save with Ctrl+O, Enter, then exit with Ctrl+X. Keep account IDs and
+   `DATA_DIR` stable; pending prompts and WhatsApp authentication live there.
+
+3. Install dependencies, check the code, and test the bot in the foreground:
+
+   ```bash
+   PUPPETEER_SKIP_DOWNLOAD=true npm ci
+   npm run check
+   npm test
+   npm start
+   ```
+
+   Send `help expense` and `budget` from each configured user's account. Once the
+   bot replies, press Ctrl+C in the SSH terminal to stop the foreground copy.
+
+4. Start the bot with PM2, from the project directory:
+
+   ```bash
+   pm2 start ecosystem.config.json --only expense-tracker
+   pm2 save
+   pm2 startup
+   ```
+
+   `pm2 startup` prints a **sudo command**. Copy and run that exact command to
+   enable startup after a reboot, then run `pm2 save` again. If this user already
+   has a working PM2 startup service, save the updated process list with `pm2 save`.
+   See [PM2 startup documentation](https://pm2.keymetrics.io/docs/usage/startup/).
+
+5. Check the process and its logs, then test `budget` again from Discord:
+
+   ```bash
+   pm2 status
+   pm2 logs expense-tracker --lines 30
+   ```
+
+   Press Ctrl+C to exit log viewing; the bot keeps running. To restart after
+   changing `.env`, use `pm2 restart expense-tracker --update-env`.
+
+The ecosystem file runs one instance in fork mode and allows up to 60 seconds
+for graceful shutdown. Keep other projects under their own PM2 process names.
+If you previously installed the optional `expense-tracker.service` systemd unit,
+stop and disable it before starting this bot with PM2, so only one instance runs.
 
 ## Automatic GitHub deployment
 
@@ -127,7 +192,9 @@ Add these **GitHub Actions secrets** (Settings → Secrets and variables → Act
 
 Create a GitHub environment named `production` if using environment-scoped secrets. Set approvals there only if desired. Permit SSH from your deployment runner through the VM firewall/security list; GitHub-hosted runner IPs vary. Prefer a controlled runner/network if you need fixed IP allowlisting.
 
-Every deployment transfers `ENV_FILE` over host-verified SSH and installs it with mode `600`. Dependencies/config are checked before stopping the service. The persistent data directory is preserved. The workflow checks service activity, not end-to-end transport health; after deployment send `help expense` and check a budget report. Updating the same service does not require pairing again. There is brief downtime during file replacement. If replacement/startup fails, the script restores the previous files and environment and restarts the service; keep a private backup of the persistent data separately.
+The SSH user must own `DEPLOY_PATH` and have Node.js, npm, rsync and PM2 available in a non-interactive SSH session. Deployments use that user's PM2 daemon; routine deployment needs no sudo. For example, use `SSH_USER=ubuntu` and `DEPLOY_PATH=/home/ubuntu/expensetracker`. The workflow uploads the code, so the VM does not need GitHub credentials.
+
+Every deployment transfers `ENV_FILE` over host-verified SSH and installs it with mode `600`. Dependencies/config are checked before stopping the service. The persistent data directory is preserved. The workflow checks that the single PM2 process is online, not end-to-end transport health; after deployment send `help expense` and check a budget report. Updating the same PM2 process does not require pairing again. There is brief downtime during file replacement. If replacement/startup fails, the script restores the previous files and environment and restarts an existing PM2 process; on a failed first deployment it removes the unsuccessful new process; keep a private backup of the persistent data separately.
 
 ## Privacy and operations
 
