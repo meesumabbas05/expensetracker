@@ -1,6 +1,6 @@
-# WhatsApp expense tracker
+# Expense tracker
 
-A private Node.js bot using whatsapp-web.js, Google Sheets, and optional Gemini command translation. Runs as a separate systemd service on an existing Linux VM. No public web server or inbound application port is needed.
+A private Node.js bot using either WhatsApp Web (whatsapp-web.js) or Discord (discord.js), Google Sheets, and optional Gemini command translation. Select one transport with `BOT_TRANSPORT`; both use the same commands, account IDs and ledger. Runs as a separate systemd service on an existing Linux VM. No public web server or inbound application port is needed.
 
 ## Commands
 
@@ -39,11 +39,11 @@ Shopping and dine-out use their own funding budgets and are excluded from the pe
 
 Months start on the 1st in `TIMEZONE`. Setting a limit mid-month retains all spending; limits do not carry into the next month. Each funding budget's **used = expenses + money lent + borrowed-money repayments assigned to it**. Ordinary `lend`/`repay` commands consume your personal budget; prefix loan commands with `household` for shared funding. Borrowing/collecting do not affect used or refund previous budget expenditure. Repayments cannot exceed the outstanding balance. Reuse the same counterparty spelling; loan balances span months. A budget named loan is only a funding label and does not create a debt record.
 
-Amounts are positive with up to two decimals. Expenses/loans/category creation require `yes`; budget-limit commands update immediately. To correct a translated command, cancel and use the guided expense flow. Budgets can show negative remaining when exceeded. Definitions persist in the Ledger as `category` rows with zero `AmountMinor` and JSON funding descriptions; preserve these rows. Categories are permanent across months; funding cannot currently be reassigned. Deletion/editing and automatic budget renewal are not implemented. Values are trimmed at their beginning/end. All allowlisted users can view all budget reports; other senders and groups are ignored. Bare `help` is ignored for the solar bot.
+Amounts are positive with up to two decimals. Expenses/loans/category creation require `yes`; budget-limit commands update immediately. To correct a translated command, cancel and use the guided expense flow. Budgets can show negative remaining when exceeded. Definitions persist in the Ledger as `category` rows with zero `AmountMinor` and JSON funding descriptions; preserve these rows. Categories are permanent across months; funding cannot currently be reassigned. Deletion/editing and automatic budget renewal are not implemented. Values are trimmed at their beginning/end. All allowlisted users can view all budget reports. WhatsApp accepts direct chats only; Discord accepts DMs and, if configured, one server channel. Other senders and channels are ignored. Bare `help` is ignored for the solar bot.
 
 ## Local setup
 
-1. Install Node.js 22+, clone this repo, run `npm ci`, and copy `.env.example` to `.env`.
+1. Install Node.js 22+, clone this repo, run `npm ci` (use `PUPPETEER_SKIP_DOWNLOAD=true npm ci` for Discord), then run `cp .env.example .env`. Open `.env` and replace the example user identities and credential placeholders with your own values. The sample includes both transports; select one with `BOT_TRANSPORT`. Keep your populated `.env` private.
 2. Create a Google Cloud project, enable the **Google Sheets API**, create a service account and JSON key. Create an empty Google spreadsheet, share it with the service-account email as **Editor**, and share it privately with your household. Set its ID and the entire JSON key in `.env`. The JSON can span multiple lines inside single quotes: The bot creates a `Ledger` tab; keep its headers and machine-format rows intact. `AmountMinor` stores cents (400 means 4.00); category-definition rows use zero. Use another tab for custom formulas/views.
 
    ```dotenv
@@ -56,11 +56,47 @@ Amounts are positive with up to two decimals. Expenses/loans/category creation r
 
    Paste the **complete downloaded JSON**, including all its fields, between the single quotes; this abbreviated example only illustrates formatting. Keep the `\n` escapes inside `private_key` exactly as downloaded. The same multiline format works inside GitHub's `ENV_FILE` secret.
 
-3. Set `USERS_JSON` to your users' stable IDs, display names, and WhatsApp identities (`<international digits>@c.us`, no `+`). WhatsApp may use `@lid` identities; include the actual sender's LID as an additional `whatsappIds` entry if needed. Obtain identities privately from your existing bot or WhatsApp tooling; never commit them. IDs/names must be unique; `household` is reserved. Sheet rows store configured account IDs, not phone numbers.
+3. Choose the transport and configure identities as described below. For WhatsApp, set `USERS_JSON` to your users' stable IDs, display names, and WhatsApp identities (`<international digits>@c.us`, no `+`). WhatsApp may use `@lid` identities; include the actual sender's LID as an additional `whatsappIds` entry if needed. Obtain identities privately from your existing bot or WhatsApp tooling; never commit them. IDs/names must be unique; `household` is reserved. Sheet rows store configured account IDs, not phone numbers.
 4. Optionally get a Gemini key from [Google AI Studio](https://aistudio.google.com/), set `GEMINI_API_KEY` and an available free-tier `GEMINI_MODEL`. Set `GEMINI_ENABLED=false` for guided-only input. Model availability, free quotas, and billing depend on your account: check [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing). Only messages starting with `gemini` send their remaining text to Gemini (including any personal information you type), along with the exact `help expense` response and available category names. No sender ID, credentials or ledger rows are sent. Other unrecognized input is ignored. Valid commands and active prompt replies stay local. Google's free-tier data terms apply; disabling Gemini avoids this transfer.
-5. Run `npm test && npm run check`. Run `SHOW_QR=true npm start` in a private terminal, then scan using WhatsApp → Linked devices. A separate bot number is recommended; use a distinct session/client ID from other bots. Send commands from an allowlisted user to the linked bot number. Turn off `SHOW_QR` after pairing.
+5. Run `npm test && npm run check`. For Discord, use the setup below and run `npm start`. For WhatsApp, run `SHOW_QR=true npm start` in a private terminal, then scan using WhatsApp → Linked devices. A separate bot number is recommended; use a distinct session/client ID from other bots. Send commands from an allowlisted user to the linked bot number. Turn off `SHOW_QR` after pairing.
 
-WhatsApp session and pending prompts live in `DATA_DIR`; preserve and back them up privately. Never run two copies against the same session/sheet: writes are serialized and deduplicated within one instance, not across multiple instances. Interrupted prompts survive restarts and expire after the configured idle time. Google Sheets is the authoritative ledger; unavailable Sheets means the bot cannot save/report. There is no offline ledger queue. Sheets API appends are not transactional: an unusually delayed write followed by a retry can still duplicate an entry; the normal read-before-retry path deduplicates by message hash.
+WhatsApp authentication and pending prompts live in `DATA_DIR`; preserve and back them up privately. Never run two copies against the same session/sheet: writes are serialized and deduplicated within one instance, not across multiple instances. Interrupted prompts survive restarts and expire after the configured idle time. Google Sheets is the authoritative ledger; unavailable Sheets means the bot cannot save/report. There is no offline ledger queue. Sheets API appends are not transactional: an unusually delayed write followed by a retry can still duplicate an entry; the normal read-before-retry path deduplicates by message hash.
+
+## Choose WhatsApp or Discord
+
+```dotenv
+# Default when omitted; starts exactly one transport.
+BOT_TRANSPORT=whatsapp
+# Switch to Discord instead:
+# BOT_TRANSPORT=discord
+```
+
+Keep each user's existing `id` and `name` when switching so their expenses, categories and budgets still belong to the same account. Both sets of identities can live in `USERS_JSON`; only the selected transport's identities are required and validated. Use string IDs, not JSON numbers. Example placeholders:
+
+```dotenv
+USERS_JSON='[{"id":"one","name":"Person One","whatsappIds":["1234567890@c.us"],"discordIds":["123456789012345678"]},{"id":"two","name":"Person Two","whatsappIds":["2345678901@c.us"],"discordIds":["234567890123456789"]}]'
+```
+
+Change `BOT_TRANSPORT` in the environment and restart the service. For GitHub deployment, update `ENV_FILE` too. Reuse the same Google Sheet, account IDs and `DATA_DIR`. WhatsApp authentication stays available when switching back; pending prompts still belong to their configured user and retain their normal expiry. Send `cancel` if you want to discard an unfinished prompt. Run only one instance against the sheet.
+
+### Discord setup
+
+1. Create an application and bot in the [Discord Developer Portal](https://discord.com/developers/applications). Store the bot token privately in `DISCORD_BOT_TOKEN`.
+2. In Discord's Settings → Advanced, enable Developer Mode, then copy each person's **user ID** into their `discordIds` array. Keep the existing internal account IDs.
+3. Add the bot to your private server using the portal's installation link. For server channel use, grant View Channel, Send Messages and Read Message History in the chosen channel.
+4. Configure:
+
+   ```dotenv
+   BOT_TRANSPORT=discord
+   DISCORD_BOT_TOKEN=YOUR_PRIVATE_BOT_TOKEN
+   # Leave empty for DMs only. Optionally copy one private server channel ID:
+   DISCORD_CHANNEL_ID=
+   ```
+
+   DMs from configured users work in either mode. Setting `DISCORD_CHANNEL_ID` also allows messages from those users in exactly that server channel. Enable **Message Content Intent** on the portal's Bot page for server channel use; DM-only mode does not request this privileged intent. See the [discord.js intents guide](https://discordjs.guide/legacy/popular-topics/intents) and [Discord's message content FAQ](https://support-dev.discord.com/hc/en-us/articles/4404772028055-Message-Content-Privileged-Intent-FAQ).
+5. Install with `PUPPETEER_SKIP_DOWNLOAD=true npm ci`, then run `npm run check && npm test && npm start`. Send `help expense` to the bot in a DM or the configured channel. Use the same plain text commands and numbered/`yes` replies as WhatsApp; slash commands are not implemented.
+
+Discord mode needs no Chromium, QR pairing or public application port. Only its adapter is loaded at runtime. Replies stay in the chat where the command was sent, so choose a private channel for financial reports. Message text never triggers Discord mentions in bot replies. Long reports are split into messages within Discord's 2,000-character limit.
 
 ## Explicit Gemini commands
 
@@ -68,12 +104,12 @@ Only `gemini <request>` invokes Gemini. It receives the complete request after t
 
 ## Oracle/Linux VM setup (one time)
 
-Use a dedicated app directory and the SSH user's own Node.js 22+ and Chromium installation. On Ubuntu/Debian, install `rsync` and Chromium (`chromium` or `chromium-browser`, depending on the distribution); set `CHROME_EXECUTABLE_PATH` to its absolute path. Oracle ARM instances should use distribution Chromium, not Puppeteer's downloaded x86 browser. Installation differs by OS; see the [headless Linux guide](https://wwebjs.dev/guide/installation). Keep `CHROME_NO_SANDBOX=false` unless your environment requires otherwise.
+Use a dedicated app directory and the SSH user's own Node.js 22+ installation. Chromium and WhatsApp pairing are needed only for `BOT_TRANSPORT=whatsapp`. Install `rsync` for deployment. For WhatsApp on Ubuntu/Debian, install Chromium (`chromium` or `chromium-browser`, depending on the distribution); set `CHROME_EXECUTABLE_PATH` to its absolute path. Oracle ARM instances should use distribution Chromium, not Puppeteer's downloaded x86 browser. Installation differs by OS; see the [headless Linux guide](https://wwebjs.dev/guide/installation). Keep `CHROME_NO_SANDBOX=false` unless your environment requires otherwise.
 
 1. Put the repo in your chosen `DEPLOY_PATH`, install dependencies with `PUPPETEER_SKIP_DOWNLOAD=true npm ci`, and create a private `.env`. Use an absolute `DATA_DIR` outside release staging paths, or the default `./data` inside the app directory.
-2. Pair WhatsApp once with the local setup command on the VM; never capture the QR in GitHub Actions logs. Stop the foreground bot after pairing.
-3. Copy `scripts/expense-tracker.service.example` to `/etc/systemd/system/expense-tracker.service`, replace its user, working directory and Node executable path. Run `sudo systemctl daemon-reload` and `sudo systemctl enable --now expense-tracker.service`. Use `sudo systemctl status expense-tracker.service` to check readiness. A service being active does not prove WhatsApp is linked or Sheets is reachable.
-4. Give the deploy SSH user ownership of the app directory and narrowly scoped passwordless sudo for **only** `systemctl stop/start/is-active expense-tracker.service` (use the actual systemctl path from `command -v systemctl`). The workflow requires these commands; do not grant unrestricted sudo. Keep the existing chatbot in its own directory/service/session. Monitor memory when running two Chromium instances.
+2. For WhatsApp, pair once with the local setup command on the VM; never capture the QR in GitHub Actions logs. Stop the foreground bot after pairing.
+3. Copy `scripts/expense-tracker.service.example` to `/etc/systemd/system/expense-tracker.service`, replace its user, working directory and Node executable path. Run `sudo systemctl daemon-reload` and `sudo systemctl enable --now expense-tracker.service`. Use `sudo systemctl status expense-tracker.service` to check readiness. A service being active does not prove the selected transport is connected or Sheets is reachable.
+4. Give the deploy SSH user ownership of the app directory and narrowly scoped passwordless sudo for **only** `systemctl stop/start/is-active expense-tracker.service` (use the actual systemctl path from `command -v systemctl`). The workflow requires these commands; do not grant unrestricted sudo. Keep the existing chatbot in its own directory/service/session. Monitor memory when running two Chromium instances in WhatsApp mode.
 
 ## Automatic GitHub deployment
 
@@ -91,10 +127,10 @@ Add these **GitHub Actions secrets** (Settings → Secrets and variables → Act
 
 Create a GitHub environment named `production` if using environment-scoped secrets. Set approvals there only if desired. Permit SSH from your deployment runner through the VM firewall/security list; GitHub-hosted runner IPs vary. Prefer a controlled runner/network if you need fixed IP allowlisting.
 
-Every deployment transfers `ENV_FILE` over host-verified SSH and installs it with mode `600`. Dependencies/config are checked before stopping the service. The persistent data directory is preserved. The workflow checks service activity, not end-to-end WhatsApp health; after deployment send `help expense` and check a budget report. Updating the same service does not require pairing again. There is brief downtime during file replacement. If replacement/startup fails, the script restores the previous files and environment and restarts the service; keep a private backup of the persistent data separately.
+Every deployment transfers `ENV_FILE` over host-verified SSH and installs it with mode `600`. Dependencies/config are checked before stopping the service. The persistent data directory is preserved. The workflow checks service activity, not end-to-end transport health; after deployment send `help expense` and check a budget report. Updating the same service does not require pairing again. There is brief downtime during file replacement. If replacement/startup fails, the script restores the previous files and environment and restarts the service; keep a private backup of the persistent data separately.
 
 ## Privacy and operations
 
-Never commit `.env`, keys, phone numbers, sheet IDs, QR codes, logs, session state or real expense data. `.gitignore` excludes common sensitive files, but review `git diff --cached` before every push. Keep secrets in `ENV_FILE`, restrict repo/VM/Sheet access, and rotate exposed credentials immediately. Authentication state is as sensitive as a password. Application logs omit message bodies, identities and API error payloads; initial configuration/startup errors should still be inspected privately. Ledger descriptions and configured names/IDs are private information stored in your own Sheet.
+Never commit `.env`, keys, phone numbers, Discord tokens/identities, sheet IDs, QR codes, logs, session state or real expense data. `.gitignore` excludes common sensitive files, but review `git diff --cached` before every push. Keep secrets in `ENV_FILE`, restrict repo/VM/Sheet access, and rotate exposed credentials immediately. Authentication state is as sensitive as a password. Application logs omit message bodies, identities and API error payloads; initial configuration/startup errors should still be inspected privately. Ledger descriptions and configured names/IDs are private information stored in your own Sheet.
 
 The bot uses [whatsapp-web.js](https://wwebjs.dev/), an unofficial WhatsApp Web client; account restrictions or upstream changes can interrupt service. Follow WhatsApp's terms. Do not use this for unsolicited messaging. Google Sheets writes use [RAW values](https://developers.google.com/workspace/sheets/api/guides/values) so user descriptions are not evaluated as formulas. README setup and command documentation should be updated with behavior changes.
