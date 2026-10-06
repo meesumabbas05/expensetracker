@@ -206,7 +206,7 @@ Inside **View budgets**, add:
 
 The bot posts the report in Discord, including who entered shared spending. Add `detail` after `budget` to include full entry lists. For all details, use `budget all detail` (putting detail before all is not that command).
 
-Webhook sending does not return the bot's later reply to Shortcuts. Read reports in the channel when convenient; the shortcut does not automatically open Discord.
+Webhook sending does not return the bot's later reply to Shortcuts. By default, read reports in the channel when convenient. Follow section 11b to open Discord automatically only after sending a View budgets request.
 
 ## 10. Undo and cancel
 
@@ -257,7 +257,40 @@ To show a useful delivery notification, add after Get Contents of URL:
 
 Keep the notification text as “Sent”, not “Saved”: the bot processes the posted command separately. A network failure can stop the shortcut before these actions. Check the Discord channel before resending if delivery is uncertain.
 
-There should be no Open URLs action in this final sending block.
+For a shortcut that never opens Discord, leave Open URLs out of this block. The optional View-only exception is below.
+
+## 11b. Optional: open Discord only after View budgets
+
+Keep the sending actions from section 11. The shortcut sends the command first, then decides whether to open the channel. No bot or environment change is needed.
+
+1. Find the existing **If Dictionary Value has any value** after Get Dictionary Value (`id`).
+2. Inside its successful branch, add another **If** before Show Notification.
+3. Set the new If's input to the saved **Message** variable. Set its condition to **begins with**, and enter the literal text `budget`.
+4. Inside this new If, add **URL** and paste your expense channel's **Copy Channel Link** value. This is the channel link, not the webhook URL.
+5. After that URL, add **Open URLs**, using the preceding URL as its input.
+6. Move **Show Notification: Sent to Expense Tracker** into this new If's **Otherwise** branch.
+7. Leave the outer Otherwise branch's delivery-failure alert in place.
+
+The end of the shortcut should look like this:
+
+```text
+Get Contents of URL (POST to your webhook)
+Get Dictionary Value: id
+If Dictionary Value has any value
+    If Message begins with budget
+        URL: your Discord expense channel link
+        Open URLs
+    Otherwise
+        Show Notification: Sent to Expense Tracker
+    End If
+Otherwise
+    Show Alert: Discord did not accept this message
+End If
+```
+
+View budgets generates commands such as `budget household` or `budget all`, so they match this condition. Expense, set-budget, add-category and undo commands do not open Discord. If the report has not arrived when the channel opens, wait for the bot's reply; a successful webhook POST confirms delivery rather than report completion.
+
+Apple documents the condition and its two branches in its [If action guide](https://support.apple.com/guide/shortcuts/use-if-actions-apd83dcd1b51/ios). This exception displays the report in Discord. Displaying it in a Shortcuts popup requires additional bot reply retrieval support; Get Dictionary Value `content` from the initial POST would return your submitted command.
 
 ## 12. Try it
 
