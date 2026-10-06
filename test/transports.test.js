@@ -53,6 +53,47 @@ test('server messages are accepted only in the explicitly configured channel', a
   client.emit(discord.Events.MessageCreate, dm());
   assert.equal(accepted.length, 2);
 });
+test('only mapped webhooks in the configured server channel identify a trusted actor', async () => {
+  const accepted = [];
+  const first = { ...actor, discordWebhookIds: ['567890123456789012'] };
+  const second = { id: 'two', name: 'Person Two', discordIds: ['678901234567890123'], discordWebhookIds: ['789012345678901234'] };
+  const channelId = '456789012345678901';
+  await createDiscordTransport({ ...config, users: [first, second], discordChannelId: channelId }, msg => accepted.push(msg), { ...discord, Client: FakeClient });
+  const client = FakeClient.instance;
+  const hook = dm({ guildId: 'guild', channel: { type: discord.ChannelType.GuildText }, channelId, webhookId: first.discordWebhookIds[0], author: { id: 'webhook-author', username: second.name, bot: true } });
+  for (const message of [
+    { ...hook, webhookId: '890123456789012345', author: { id: first.discordIds[0], bot: true } },
+    { ...hook, channelId: '234567890123456789' },
+    { ...hook, guildId: null, channel: { type: discord.ChannelType.DM } },
+    { ...hook, webhookId: null, author: { id: first.discordIds[0], bot: true } }
+  ]) client.emit(discord.Events.MessageCreate, message);
+  assert.equal(accepted.length, 0);
+  client.emit(discord.Events.MessageCreate, hook);
+  client.emit(discord.Events.MessageCreate, { ...hook, webhookId: second.discordWebhookIds[0] });
+  assert.deepEqual(accepted.map(msg => msg.actor.id), ['one', 'two']);
+  let response;
+  client.emit(discord.Events.MessageCreate, { ...hook, reply: async options => { response = options; } });
+  await accepted.at(-1).reply('Saved expense');
+  assert.deepEqual(response.allowedMentions, { parse: [], repliedUser: false });
+});
+test('two iPhone webhooks save and undo under their respective owners without confirmations', async () => {
+  const users = [{ ...actor, discordWebhookIds: ['567890123456789012'] }, { id: 'two', name: 'Person Two', discordIds: ['678901234567890123'], discordWebhookIds: ['789012345678901234'] }];
+  const rows = [], sessions = {}, replies = [];
+  const store = { rows: async () => rows, append: async row => { if (!rows.some(r => r.id === row.id)) rows.push(row); } };
+  const channelId = '456789012345678901';
+  const cfg = { ...config, users, discordChannelId: channelId };
+  const processor = createMessageProcessor(new Bot(cfg, store, sessions, async () => {}, () => new Date('2026-10-06T12:00:00Z')));
+  await createDiscordTransport(cfg, msg => processor.enqueue(msg), { ...discord, Client: FakeClient });
+  const send = (content, person, id) => FakeClient.instance.emit(discord.Events.MessageCreate, dm({ content, id, guildId: 'guild', channel: { type: discord.ChannelType.GuildText }, channelId, webhookId: users[person].discordWebhookIds[0], author: { id: users[person].discordWebhookIds[0], bot: true }, reply: async options => replies.push(options.content) }));
+  send('expense 100 groceries | Groceries', 0, 'first');
+  send('expense 200 fuel | Fuel', 1, 'second');
+  send('undo', 0, 'undo-first');
+  send('undo', 0, 'undo-first');
+  await processor.close();
+  assert.deepEqual(rows.map(r => [r.actor, r.kind]), [['one', 'expense'], ['two', 'expense'], ['one', 'undo']]);
+  assert.ok(replies.some(reply => /Undid expense: PKR 100.00/.test(reply)));
+  assert.deepEqual(sessions, {});
+});
 test('WhatsApp keeps existing direct-chat filtering and original message IDs', async () => {
   const accepted = [];
   class LocalAuth { constructor(options) { this.options = options; } }

@@ -16,6 +16,16 @@ export function readConfig(env = process.env) {
   }
   const identities = users.flatMap(u => u[identityKey]);
   if (new Set(users.map(u => u.id)).size !== users.length || new Set(identities).size !== identities.length) throw new Error('Duplicate user IDs or transport identities');
+  if (transport === 'discord') {
+    for (const user of users) {
+      const ids = user.discordWebhookIds ?? [];
+      if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string' || !/^\d{17,20}$/.test(id.trim()))) throw new Error('Invalid discordWebhookIds in USERS_JSON');
+      user.discordWebhookIds = ids.map(id => id.trim());
+    }
+    const webhookIds = users.flatMap(u => u.discordWebhookIds);
+    if (new Set(webhookIds).size !== webhookIds.length) throw new Error('Duplicate Discord webhook identities');
+    if (webhookIds.length && !env.DISCORD_CHANNEL_ID) throw new Error('DISCORD_CHANNEL_ID is required for Discord webhooks');
+  }
   const aliases = users.flatMap(u => [u.id.toLowerCase(), u.name.toLowerCase()]);
   if (users.some((u, i) => users.some((v, j) => i !== j && [u.id.toLowerCase(), u.name.toLowerCase()].some(a => [v.id.toLowerCase(), v.name.toLowerCase()].includes(a)))) || aliases.includes('household')) throw new Error('Ambiguous user names');
   const categories = JSON.parse(env.CATEGORIES_JSON || '["House expenses","Groceries","Fuel","Dine-out","Sports","Utilities","Shopping","Health","Travel","Other"]');

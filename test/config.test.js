@@ -33,3 +33,13 @@ test('invalid selection and ambiguous active identities fail before connecting',
     assert.throws(() => readConfig({ ...env, BOT_TRANSPORT: transport, DISCORD_BOT_TOKEN: 'test-token', USERS_JSON: JSON.stringify([user, second]) }), /Duplicate/);
   }
 });
+test('optional Discord webhooks require a channel, valid string IDs and unique ownership', () => {
+  const webhook = '345678901234567890';
+  const discordEnv = { ...env, BOT_TRANSPORT: 'discord', DISCORD_BOT_TOKEN: 'test-token', DISCORD_CHANNEL_ID: '234567890123456789' };
+  const cfg = value => readConfig({ ...discordEnv, USERS_JSON: JSON.stringify([{ ...user, discordWebhookIds: value }]) });
+  assert.deepEqual(cfg([` ${webhook} `]).users[0].discordWebhookIds, [webhook]);
+  assert.deepEqual(cfg(undefined).users[0].discordWebhookIds, []);
+  for (const value of ['webhook', [345678901234567890], ['bad'], [null]]) assert.throws(() => cfg(value), /discordWebhookIds/);
+  assert.throws(() => readConfig({ ...discordEnv, DISCORD_CHANNEL_ID: '', USERS_JSON: JSON.stringify([{ ...user, discordWebhookIds: [webhook] }]) }), /DISCORD_CHANNEL_ID/);
+  assert.throws(() => readConfig({ ...discordEnv, USERS_JSON: JSON.stringify([{ ...user, discordWebhookIds: [webhook] }, { ...user, id: 'two', name: 'Two', discordIds: ['456789012345678901'], discordWebhookIds: [webhook] }]) }), /Duplicate Discord webhook/);
+});
