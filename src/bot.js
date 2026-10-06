@@ -1,4 +1,4 @@
-import { amount, dateParts, money, loans, categoryDefinitions, fundingOf, fundingSummary } from './domain.js';
+import { amount, dateParts, money, loans, categoryDefinitions, fundingOf, fundingSummary, canonicalBudget } from './domain.js';
 import { translateCommand } from './extract.js';
 import { parseCommand, validGeneratedCommand } from './commands.js';
 export class Bot {
@@ -8,7 +8,7 @@ export class Bot {
   fmt(n) { return money(n, this.config.currency); }
   menu(categories = this.config.categories) { return categories.map((c, i) => `${i + 1}. ${c}`).join('\n'); }
   help() {
-    return `Commands (positive amounts, up to 2 decimals):\nexpense 400\ngemini <request> — explicitly translate a request into a command\nexpense 4000 dinner at a restaurant\nexpense 100 Brownzie\nexpense <amount> <description> | <category>\nset budget 50000\nset household budget 80000\nset shopping budget 10000 / set dine-out budget 5000\nset <budget name> budget <amount>\nbudget — your personal budget\nbudget <name> — one funding budget\nbudget detail <name> — remaining, totals and entries by category\nbudget detail — personal details\nbudget all — each budget separately\nbudget all detail — all entries grouped by budget and category\nget budget / get budget detail (legacy aliases)\ntotal <configured name or ID> / total household\nlend 1000 to Alex / borrow 1000 from Alex\ncollect 500 from Alex / repay 500 to Alex\nloans / household loans\nadd <category> — choose separate or existing funding\nadd <category> household / add <category> loan\nadd <category> <budget>\nadd category <multiword category name>\nadd <category> from <multiword budget name>\ncategories\ncancel / help expense / help expenses\nReply yes to save pending entries. Household funding is shared; other budgets belong to the sender. Each expense uses one funding budget. Months start on the 1st; budget updates retain spending.`;
+    return `Commands (positive amounts, up to 2 decimals):\nexpense 400\ngemini <request> — explicitly translate a request into a command\nexpense 4000 dinner at a restaurant\nexpense 100 Brownzie\nexpense <amount> <description> | <category>\nset budget 25000 / set individual budget 25000\nset household budget 80000\nset shopping budget 25000 — Shopping and Dine-out share this limit\nset investments budget 25000\nset <budget name> budget <amount>\nbudget — your individual budget\nbudget <name> — one funding budget\nbudget detail <name> — remaining, totals and entries by category\nbudget detail — individual details\nbudget all — each budget separately\nbudget all detail — all entries grouped by budget and category\nget budget / get budget detail (legacy aliases)\ntotal <configured name or ID> / total household\nlend 1000 to Alex / borrow 1000 from Alex\ncollect 500 from Alex / repay 500 to Alex\nloans / household loans\nadd <category> — choose separate or existing funding\nadd <category> household / add <category> loan\nadd <category> <budget>\nadd category <multiword category name>\nadd <category> from <multiword budget name>\ncategories\ncancel / help expense / help expenses\nReply yes to save pending entries. Household funding is shared; other budgets belong to the sender. Each expense uses one funding budget. Months start on the 1st; budget updates retain spending.`;
   }
   async handle(actor, text, messageId, translated = false) {
     text = text.trim();
@@ -23,6 +23,10 @@ export class Bot {
     const geminiRequest = text.match(/^gemini(?:\s+([\s\S]*))?$/i);
     if (pending && geminiRequest) return 'Finish the pending entry or send cancel before using gemini.';
     if (pending) {
+      if (this.config.categoryFunding && pending.kind === 'expense' && pending.category) {
+        pending.funding = categoryDefinitions(rows, actor.id, this.config).find(d => d.name === pending.category)?.source || 'Budget';
+        if (pending.account === 'household' && pending.funding !== 'household') return 'That category is not funded by household. Send cancel and enter expense without the household prefix.';
+      }
       if (pending.lastMessageId === messageId) return this.prompt(pending);
       if (pending.kind === 'category') return this.handleCategory(actor, text, messageId, pending, rows);
       if (pending.stage === 'confirm') {
@@ -70,7 +74,7 @@ export class Bot {
       if (scope === 'household') return 'Use add <category> household to fund a category from the household budget.';
       return this.startCategory(actor, scopedText, actor.id, messageId, rows);
     }
-    if (scopedText.toLowerCase() === 'categories') return categoryDefinitions(rows, scope, this.config).map((d, i) => `${i + 1}. ${d.name} → ${d.source === 'Budget' ? 'overall budget' : d.source}`).join('\n');
+    if (scopedText.toLowerCase() === 'categories') return categoryDefinitions(rows, scope, this.config).map((d, i) => `${i + 1}. ${d.name} → ${d.source === 'Budget' ? 'individual budget' : d.source === 'household' ? 'household budget' : d.source}`).join('\n');
     const budgetQuery = text.match(/^budget(?:\s+(.*))?$/i);
     if (budgetQuery) {
       const query = (budgetQuery[1] || '').trim();
@@ -116,6 +120,7 @@ export class Bot {
       if (kind === 'expense') {
         const direct = pending.options.find(c => c.toLowerCase() === entry[4].trim().toLowerCase());
         if (parsedCommand.category || direct) {
+          if (parsedCommand.category && !pending.options.includes(parsedCommand.category)) return 'That category is not funded by household. Use expense without the household prefix.';
           pending.description = parsedCommand.description;
           pending.category = parsedCommand.category || direct;
           pending.stage = 'confirm';
@@ -137,7 +142,7 @@ export class Bot {
   budgetSection(rows, account, month, name, detail) {
     const s = fundingSummary(rows, account, month, name, this.config);
     const owner = this.config.users.find(u => u.id === account)?.name || account;
-    const title = account === 'household' ? 'household' : `${owner} · ${name === 'Budget' ? 'personal' : name}`;
+    const title = account === 'household' ? 'household' : `${owner} · ${name === 'Budget' ? 'individual' : name}`;
     let out = `${title} · ${month}\nBudget: ${s.limit === null ? 'not set' : this.fmt(s.limit)}\nUsed: ${this.fmt(s.used)}\nRemaining: ${s.remaining === null ? 'set a budget first' : this.fmt(s.remaining)}`;
     if (detail) {
       const grouped = new Map();
@@ -166,13 +171,14 @@ export class Bot {
     return typeof name === 'string' && name.trim().length > 0 && name.trim().length <= 60 && !/[\r\n]/.test(name) && !['yes', 'no', 'cancel', 'help', 'detail', 'all', 'budget detail'].includes(name.trim().toLowerCase());
   }
   budgetNames(rows, account) {
-    return [...new Set([...Object.values(this.config.categoryBudgets), ...rows.filter(r => r.account === account && r.kind === 'budget' && r.category !== 'Budget').map(r => r.category.trim()), ...categoryDefinitions(rows, account, this.config).map(d => d.source).filter(s => s !== 'Budget')])];
+    return [...new Set([...Object.values(this.config.categoryBudgets), ...rows.filter(r => r.account === account && r.kind === 'budget').map(r => canonicalBudget(r.category, this.config)), ...categoryDefinitions(rows, account, this.config).map(d => d.source)].filter(s => s !== 'Budget'))];
   }
   resolveBudget(name, rows, account) {
     name = name.trim().toLowerCase();
     if (name === 'household') return 'household';
-    if (['main', 'overall', 'personal', 'budget'].includes(name)) return 'Budget';
-    return this.config.categoryBudgets[name] || this.budgetNames(rows, account).find(n => n.toLowerCase() === name) || null;
+    if (['main', 'overall', 'personal', 'individual', 'budget'].includes(name)) return 'Budget';
+    const canonical = canonicalBudget(name, this.config);
+    return this.budgetNames(rows, account).find(n => n.toLowerCase() === canonical.toLowerCase()) || null;
   }
   async startCategory(actor, text, account, id, rows) {
     let body = text.replace(/^add\s+/i, '').trim();
@@ -188,7 +194,7 @@ export class Bot {
         }
       }
     }
-    if (!this.validName(body) || ['budget', 'main', 'overall', 'personal', 'household', 'all'].includes(body.toLowerCase())) return 'Use a category name of 1–60 characters. For multiword names use add category <name>.';
+    if (!this.validName(body) || ['budget', 'main', 'overall', 'personal', 'individual', 'household', 'all'].includes(body.toLowerCase())) return 'Use a category name of 1–60 characters. For multiword names use add category <name>.';
     if (categoryDefinitions(rows, account, this.config).some(d => d.name.toLowerCase() === body.toLowerCase())) return 'That category already exists in this account.';
     if (source && !this.validName(source)) return 'Use a valid budget name of 1–60 characters.';
     const pending = { id, kind: 'category', account, category: body, source, stage: source ? 'confirm' : 'category-mode', updated: this.now().getTime(), lastMessageId: id };
@@ -200,7 +206,7 @@ export class Bot {
   chooseSource(pending, source, rows) {
     pending.source = this.resolveBudget(source, rows, pending.account) || source.trim();
     const month = dateParts(this.now(), this.config.timezone).month;
-    const hasBudget = pending.source === 'Budget' || rows.some(r => r.account === (pending.source === 'household' ? 'household' : pending.account) && r.kind === 'budget' && r.month === month && r.category.toLowerCase() === (pending.source === 'household' ? 'budget' : pending.source.toLowerCase()));
+    const hasBudget = pending.source === 'Budget' || fundingSummary(rows, pending.source === 'household' ? 'household' : pending.account, month, pending.source === 'household' ? 'Budget' : pending.source, this.config).limit !== null;
     pending.stage = hasBudget ? 'confirm' : 'category-budget-amount';
   }
   async handleCategory(actor, text, id, pending, rows) {
@@ -231,15 +237,15 @@ export class Bot {
   }
   categoryPrompt(p) {
     if (p.stage === 'category-mode') return `How should ${p.category} be tracked?\n1. Separate budget (reply separate)\n2. Use another budget (reply shared)\nOr cancel.`;
-    if (p.stage === 'category-source') return 'Which budget should pay for this category? Reply personal, household, shopping, dine-out, loan, or another budget name. A new name starts budget setup.';
+    if (p.stage === 'category-source') return 'Which budget should pay for this category? Reply individual, household, shopping, investments, loan, or another budget name. A new name starts budget setup.';
     if (p.stage === 'category-budget-amount') return `Set the monthly budget amount for ${p.source}. Existing spending will be retained.`;
-    return `Add category: ${p.category}\nAccount: ${p.account}\nFunding budget: ${p.source === 'Budget' ? 'overall' : p.source}${p.budgetAmount ? `\nMonthly limit: ${this.fmt(p.budgetAmount)}` : ''}\nReply yes to save, or cancel.`;
+    return `Add category: ${p.category}\nAccount: ${p.account}\nFunding budget: ${p.source === 'Budget' ? 'individual' : p.source}${p.budgetAmount ? `\nMonthly limit: ${this.fmt(p.budgetAmount)}` : ''}\nReply yes to save, or cancel.`;
   }
   prompt(p) {
     if (p.kind === 'category') return this.categoryPrompt(p);
     if (p.stage === 'description') return 'Where was it spent, or what was it for?';
     if (p.stage === 'category') return `Choose a category:\n${this.menu(p.options)}`;
-    const funding = p.account === 'household' ? 'household' : p.kind === 'expense' ? p.funding === 'Budget' ? 'personal' : p.funding || 'personal' : 'personal';
+    const funding = p.account === 'household' ? 'household' : p.kind === 'expense' ? p.funding === 'Budget' ? 'individual' : p.funding || 'individual' : 'individual';
     return `${p.kind} · ${this.fmt(p.amount)}\nFunding: ${funding}\nAccount: ${p.account}\nFor: ${p.description}\nCategory: ${p.category}\nReply yes to save, or cancel.`;
   }
   details(rows) {

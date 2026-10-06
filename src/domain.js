@@ -45,25 +45,44 @@ export function categorySummary(rows, account, month, category, definitions = []
 }
 
 export function categoryDefinitions(rows, account, config) {
-  const definitions = config.categories.map(name => ({ name: name.trim(), source: Object.values(config.categoryBudgets).includes(name.trim()) ? name.trim() : 'Budget' }));
+  const definitions = config.categories.map(name => ({ name: name.trim(), source: config.categoryFunding?.[name.trim()] || (Object.values(config.categoryBudgets).includes(name.trim()) ? name.trim() : 'Budget') }));
   for (const row of rows.filter(r => r.kind === 'category')) {
     const definition = JSON.parse(row.description);
     if (row.account !== account && definition.source?.trim().toLowerCase() !== 'household') continue;
     if (typeof definition.source !== 'string' || !definition.source.trim()) throw new Error('Invalid category definition');
-    definitions.push({ name: row.category.trim(), source: definition.source.trim() });
+    if (config.categoryFunding && definitions.some(d => d.name.toLowerCase() === row.category.toLowerCase())) continue;
+    definitions.push({ name: row.category.trim(), source: canonicalBudget(definition.source, config) });
   }
-  return definitions;
+  return config.categoryFunding && account === 'household' ? definitions.filter(d => d.source.toLowerCase() === 'household') : definitions;
+}
+
+export function canonicalBudget(name, config) {
+  const lower = name.trim().toLowerCase();
+  if (['main', 'overall', 'personal', 'individual', 'budget'].includes(lower)) return 'Budget';
+  if (lower === 'household') return 'household';
+  if (config.categoryFunding) {
+    const category = Object.keys(config.categoryFunding).find(c => c.toLowerCase() === lower && config.categoryFunding[c] === 'Shopping & Dine-out');
+    if (category) return 'Shopping & Dine-out';
+  }
+  return Object.hasOwn(config.categoryBudgets, lower) ? config.categoryBudgets[lower] : name.trim();
 }
 
 // A transaction belongs to one funding budget; its actor still identifies who paid.
 export function fundingOf(row, rows, config) {
+  const builtIn = row.kind === 'expense' && config.categoryFunding && Object.entries(config.categoryFunding).find(([category]) => category.toLowerCase() === row.category.toLowerCase());
+  if (builtIn) {
+    const source = canonicalBudget(builtIn[1], config);
+    return source === 'household' ? { account: 'household', name: 'Budget' } : { account: row.actor || row.account, name: source };
+  }
   if (row.account === 'household') return { account: 'household', name: 'Budget' };
   const definition = row.kind === 'expense' ? categoryDefinitions(rows, row.account, config).find(d => d.name.toLowerCase() === row.category.toLowerCase()) : null;
-  const source = definition?.source || 'Budget';
+  const source = canonicalBudget(definition?.source || 'Budget', config);
   return source.toLowerCase() === 'household' ? { account: 'household', name: 'Budget' } : { account: row.account, name: source };
 }
 export function fundingSummary(rows, account, month, name, config) {
-  const limit = rows.filter(r => r.account === account && r.month === month && r.kind === 'budget' && r.category.toLowerCase() === name.toLowerCase()).at(-1)?.amount ?? null;
+  name = canonicalBudget(name, config);
+  const defaultLimit = ['Budget', ...Object.values(config.categoryBudgets)].includes(name) ? config.defaultMonthlyBudget ?? null : null;
+  const limit = rows.filter(r => r.account === account && r.month === month && r.kind === 'budget' && canonicalBudget(r.category, config).toLowerCase() === name.toLowerCase()).at(-1)?.amount ?? defaultLimit;
   const spending = rows.filter(r => {
     if (r.month !== month || !['expense', 'lend', 'repay'].includes(r.kind)) return false;
     const funding = fundingOf(r, rows, config);

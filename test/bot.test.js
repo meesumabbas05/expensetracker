@@ -107,7 +107,7 @@ test('guided separate and main funding; household definitions persist in ledger'
   await send('expense 20 Pet supplies'); await send('yes');
   assert.match(await send('budget household'), /Remaining: PKR 380.00/);
   await send('add Essentials'); await send('shared'); await send('main'); await send('yes');
-  assert.match(await send('categories'), /Essentials → overall budget/);
+  assert.match(await send('categories'), /Essentials → individual budget/);
   const restarted = new Bot(config, bot.store, sessions, async () => {}, bot.now);
   assert.match(await restarted.handle(config.users[0], 'categories', 'restart'), /Pet supplies/);
   assert.equal(rows.filter(r => r.kind === 'category').length, 2);
@@ -201,7 +201,7 @@ test('budget all detail groups every funding budget and category without double 
   assert.doesNotMatch(detail, /shoes/);
   const all = await send('budget all detail');
   assert.match(all, /Person One · shopping|Person One · Shopping/);
-  assert.match(all, /Person One · loan/); assert.match(all, /Person Two · personal/);
+  assert.match(all, /Person One · loan/); assert.match(all, /Person Two · individual/);
   assert.match(all, /household/);
   assert.equal(all.split(' · shoes · ').length - 1, 1);
   assert.equal(all.split(' · Brownzie · ').length - 1, 1);
