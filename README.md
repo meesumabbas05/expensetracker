@@ -7,9 +7,9 @@ A private Node.js bot using either WhatsApp Web (whatsapp-web.js) or Discord (di
 | Message | Result |
 | --- | --- |
 | `expense 400` | Asks where/why, then a numbered category |
-| `expense 4000 dinner at a restaurant` | Parses locally, asks for category, then confirmation |
+| `expense 4000 dinner at a restaurant` | Parses locally, asks for category, then saves |
 | `gemini I spent 4000 on dinner at a restaurant` | Explicitly asks Gemini to translate the remaining text into one supported command |
-| `expense 4000 dinner at a restaurant \| Dine-out` | Explicit category; asks for confirmation without Gemini |
+| `expense 4000 dinner at a restaurant \| Dine-out` | Explicit category; saves immediately without Gemini |
 | `expense 100 Brownzie` | Directly selects the named category and its funding budget |
 | `add Brownzie household` | Links Brownzie to the shared household funding budget |
 | `add Brownzie loan` | Links Brownzie to a budget named loan (not a lending transaction) |
@@ -33,7 +33,8 @@ A private Node.js bot using either WhatsApp Web (whatsapp-web.js) or Discord (di
 | `lend 1000 to Alex` / `borrow 1000 from Alex` | Separate lending/borrowing ledger |
 | `collect 500 from Alex` / `repay 500 to Alex` | Reduces outstanding balances for that name (case-insensitive) |
 | `loans` / `household loans` | Outstanding personal/shared loans across all months |
-| `yes` / `cancel` | Save pending entry or discard it |
+| `undo` | Reverses your latest saved change, including a budget update |
+| `cancel` | Discards unfinished input |
 | `help expense` / `help expenses` | Full command list; pending entries stay intact |
 
 **A category is a label; a budget is its funding source.** Each expense consumes exactly one funding budget. The default mapping is:
@@ -57,7 +58,13 @@ Use `add Brownzie household` to create a category using the shared household bud
 
 Months start on the 1st in `TIMEZONE`. Setting a limit mid-month retains all spending; limits do not carry into the next month. Each funding budget's **used = expenses + money lent + borrowed-money repayments assigned to it**. Ordinary `lend`/`repay` commands consume your personal budget; prefix loan commands with `household` for shared funding. Borrowing/collecting do not affect used or refund previous budget expenditure. Repayments cannot exceed the outstanding balance. Reuse the same counterparty spelling; loan balances span months. A budget named loan is only a funding label and does not create a debt record.
 
-Amounts are positive with up to two decimals. Expenses/loans/category creation require `yes`; budget-limit commands update immediately. To correct a translated command, cancel and use the guided expense flow. Budgets can show negative remaining when exceeded. Definitions persist in the Ledger as `category` rows with zero `AmountMinor` and JSON funding descriptions; preserve these rows. Categories are permanent across months; funding cannot currently be reassigned. Deletion/editing and automatic budget renewal are not implemented. Values are trimmed at their beginning/end. All allowlisted users can view all budget reports. WhatsApp accepts direct chats only; Discord accepts DMs and, if configured, one server channel. Other senders and channels are ignored. Bare `help` is ignored for the solar bot.
+Amounts are positive with up to two decimals. Completed expenses, loans, category creation and budget-limit commands save immediately. Guided commands ask only for missing details. Send `undo` to reverse your latest saved change; send `cancel` to discard unfinished input. To correct a saved translated command, undo and enter the corrected command. Budgets can show negative remaining when exceeded. Definitions persist in the Ledger as `category` rows with zero `AmountMinor` and JSON funding descriptions; preserve these rows. Undo appends a zero-amount `undo` row whose JSON description lists reversed row IDs; original rows remain for audit. Reports ignore reversed rows. Preserve undo rows as well, and exclude reversed rows when building custom sheet formulas. Undo survives restarts and works across months; repeated `undo` commands work backwards through your own saved changes. Budget undo restores the previous applicable monthly limit or default while retaining spending and other users' later updates. Category creation and its initial limit undo together. Categories still used by saved expenses, and loan principal still needed by collections/repayments, require undoing dependent entries first. Categories persist across months; funding cannot currently be reassigned. General editing and automatic budget renewal are not implemented. Values are trimmed at their beginning/end. All allowlisted users can view all budget reports. WhatsApp accepts direct chats only; Discord accepts DMs and, if configured, one server channel. Other senders and channels are ignored. Bare `help` is ignored for the solar bot.
+
+## iPhone shortcut menu
+
+Use Add expense, Set budget, Add new budget, Add category, View budgets, Undo last change, and optionally Cancel unfinished input. Replace the former Confirm pending entry branch with a Text action containing `undo`, then Set Variable `Message` to that Text. Completed commands save as soon as you send them; no `yes` message is needed. Cancel affects only unfinished input.
+
+The current shortcut copies `Message` to the clipboard and opens the configured Discord channel. Paste and tap Send there using your own Discord account; webhook messages are ignored by this bot. Each person's undo reverses their own latest change, including entries in shared budgets. Reports do not count as changes.
 
 ## Local setup
 
@@ -118,7 +125,7 @@ Discord mode needs no Chromium, QR pairing or public application port. Only its 
 
 ## Explicit Gemini commands
 
-Only `gemini <request>` invokes Gemini. It receives the complete request after the prefix (trimmed at the edges), the exact command-help response, and existing category names. Unrecognized messages without this prefix are ignored without a reply or API call. `gemini` alone shows usage; finish or cancel a pending entry before using Gemini. A strict JSON schema requests only `{"command":"..."}`; the shared local parser validates the result before dispatch. Extra fields, unknown commands, multiple lines, invalid amounts, unknown explicit categories and fabricated confirmation replies are rejected. There is one initial generation plus **three retries** for invalid output, each with corrective feedback; no invalid attempt writes to Sheets. Authentication/quota/service errors return the local fallback immediately. Generated commands never recursively invoke Gemini. The reply shows `Interpreted as: ...` before the normal command result; expenses still require `yes`, while budget-limit commands update immediately, just like typed commands. If translation fails, use `help expense` and enter a supported command directly. Canonical commands such as `expense 4000 dinner at a restaurant` no longer invoke AI: they ask for a category unless the description is an exact category name or uses `| <category>`.
+Only `gemini <request>` invokes Gemini. It receives the complete request after the prefix (trimmed at the edges), the exact command-help response, and existing category names. Unrecognized messages without this prefix are ignored without a reply or API call. `gemini` alone shows usage; finish or cancel a pending entry before using Gemini. A strict JSON schema requests only `{"command":"..."}`; the shared local parser validates the result before dispatch. Extra fields, unknown commands, multiple lines, invalid amounts, unknown explicit categories and fabricated session-control commands such as `undo` are rejected. There is one initial generation plus **three retries** for invalid output, each with corrective feedback; no invalid attempt writes to Sheets. Authentication/quota/service errors return the local fallback immediately. Generated commands never recursively invoke Gemini. The reply shows `Interpreted as: ...` before the normal command result; completed entries save immediately, just like typed commands; use `undo` to reverse your latest saved change. If translation fails, use `help expense` and enter a supported command directly. Canonical commands such as `expense 4000 dinner at a restaurant` no longer invoke AI: they ask for a category unless the description is an exact category name or uses `| <category>`.
 
 ## First deployment on Oracle Ubuntu with PM2
 
