@@ -52,6 +52,18 @@ jobs:
           printf '%s\n' "$SSH_PRIVATE_KEY" > "$private_dir/key"
           printf '%s\n' "$SSH_KNOWN_HOSTS" > "$private_dir/known_hosts"
           printf '%s\n' "$ENV_FILE" > "$private_dir/.env"
+          if ! ssh-keygen -lf "$private_dir/known_hosts" -E sha256 > "$private_dir/fingerprints" 2>/dev/null; then
+            echo "SSH_KNOWN_HOSTS must contain complete known_hosts lines: host key-type public-key."
+            exit 1
+          fi
+          echo "Saved SSH host-key fingerprints (public information):"
+          awk '{print $1, $2, $NF}' "$private_dir/fingerprints"
+          lookup_host="$SSH_HOST"
+          if [[ "$port" != 22 ]]; then lookup_host="[$SSH_HOST]:$port"; fi
+          if ! ssh-keygen -F "$lookup_host" -f "$private_dir/known_hosts" >/dev/null; then
+            echo "SSH_KNOWN_HOSTS has no entry matching SSH_HOST and SSH_PORT."
+            exit 1
+          fi
           ssh_args=(-i "$private_dir/key" -p "$port" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$private_dir/known_hosts")
           stage="$DEPLOY_PATH/releases/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh "${ssh_args[@]}" "$SSH_USER@$SSH_HOST" "umask 077; mkdir -p '$stage'"
