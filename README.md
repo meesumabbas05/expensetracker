@@ -19,13 +19,15 @@ A private Node.js bot using either WhatsApp Web (whatsapp-web.js) or Discord (di
 | `categories` | Lists categories, menu numbers and funding budgets |
 | `set budget 50000` / `set individual budget 50000` | Updates your individual monthly limit |
 | `set household budget 80000` | Updates the shared household monthly limit |
-| `set shopping budget 25000` / `set dine-out budget 25000` | Updates the same combined Shopping & Dine-out limit for the sender |
-| `set investments budget 25000` | Updates the sender's Investments limit for Short-term and Long-term |
+| `set shopping budget 25000` / `set dine-out budget 25000` | Updates one shared combined Shopping & Dine-out limit |
+| `set investments budget 25000` | Updates one shared Investments limit for Short-term and Long-term |
 | `set <name> budget <amount>` | Creates/updates a named monthly funding budget |
 | `budget` / `budget individual` | Your individual limit, used and remaining |
 | `budget <name>` | One funding budget, e.g. `budget household` or `budget loan` |
 | `budget detail` / `budget detail <name>` | Personal/named remaining and totals, plus full expenses grouped by category |
-| `budget all` | Each configured user's individual, Shopping & Dine-out, Investments and custom budgets, plus shared Household |
+| `budget all` | Each person's individual/custom budgets, plus Household, Shopping & Dine-out and Investments once each |
+| `budget household by <name or ID>` | Shared Household totals plus the amount entered by that person this month |
+| `budget detail household by <name or ID>` | The same totals plus that person's Household entries; also works for shopping/investments |
 | `budget all detail` | Full expense lists grouped by budget, then category, with limits/totals/remaining |
 | `total <configured name or ID>` / `total household` | Current-month transactions by sender or household funding |
 | `lend 1000 to Alex` / `borrow 1000 from Alex` | Separate lending/borrowing ledger |
@@ -39,17 +41,19 @@ A private Node.js bot using either WhatsApp Web (whatsapp-web.js) or Discord (di
 | Budget | Categories | Owner |
 | --- | --- | --- |
 | Household | House expenses, Groceries, Fuel | Shared by all configured users |
-| Shopping & Dine-out | Shopping, Dine-out | A separate combined budget for each person |
+| Shopping & Dine-out | Shopping, Dine-out | Shared by all configured users |
 | Individual | Sports, Utilities, Health, Travel, Other | A separate budget for each person |
-| Investments | Short-term, Long-term | A separate combined budget for each person |
+| Investments | Short-term, Long-term | Shared by all configured users |
 
-Every built-in budget defaults to **25,000 per month** in `CURRENCY` when no limit is explicitly set for that month. `DEFAULT_MONTHLY_BUDGET` changes this fallback. Household has one shared limit. Each person's individual, Shopping & Dine-out, and Investments limits can be set independently. A new month uses the default until a limit is set for that month; previous months' limits and spending stay in the ledger.
+Every built-in budget defaults to **25,000 per month** in `CURRENCY` when no limit is explicitly set for that month. `DEFAULT_MONTHLY_BUDGET` changes this fallback. Household, Shopping & Dine-out and Investments each have one shared limit: either person can set it, and both people's entries consume it. Individual has a separate limit for each person. A new month uses the default until a limit is set for that month; previous months' limits and spending stay in the ledger.
 
-Send `expense 400 groceries | Groceries` to use Household automatically, or `expense 1000 deposit | Short-term` to use your Investments budget. Household-funded categories are available to both users; the ledger retains who paid. `HOUSEHOLD_CATEGORIES_JSON` can change the household category mapping. The configured Shopping and Dine-out labels must remain distinct, and their budget is always combined. An older ten-category environment works without editing: Short-term and Long-term are appended automatically.
+Send `expense 400 groceries | Groceries` to use Household automatically, or `expense 1000 deposit | Short-term` to use shared Investments. Categories funded by any of the three shared budgets are available to both users. The ledger's `Actor` records who entered each entry; new shared entries use `Account=household`, with the category identifying their funding budget. `HOUSEHOLD_CATEGORIES_JSON` can change the household category mapping. The configured Shopping and Dine-out labels must remain distinct, and their budget is always combined. An older ten-category environment works without editing: Short-term and Long-term are appended automatically.
 
-Existing expense rows are grouped using this mapping without rewriting the sheet. Old Shopping and Dine-out limits refer to the combined budget; the latest matching limit in the ledger wins for that person and month. Custom categories formerly funded by either also use the combined budget. Other custom definitions and named budgets are retained. Built-in category mappings take precedence over old definitions of the same category.
+Existing expense rows are grouped using this mapping without rewriting the sheet. Old Shopping/Dine-out and Investments limits become shared: the latest matching limit in the ledger across both people wins for each budget and month. Their expenses are combined while retaining the original `Actor`. Custom categories formerly funded by either Shopping or Dine-out also use the combined shared budget. Other custom definitions and named budgets are retained. Built-in category mappings take precedence over old definitions of the same category.
 
-Use `add Brownzie household` to create a category using the shared household budget, or `add Pension from investments` to use your Investments budget. A category using `individual` (older aliases `personal`, `main`, `overall`) uses the sender's individual budget. `budget <configured user name or ID>` queries that person's individual budget. The older `get ... budget` commands still work. Additional custom categories follow the built-in twelve in the menu; Gemini receives the expanded category list when command translation is requested.
+`budget household`, `budget shopping` and `budget investments` show shared usage plus a breakdown headed **Entered by**. Add `by <configured name or ID>` to select one person's contribution, for example `budget detail household by Person Two`. The budget's Used/Remaining stay shared; the selected person's entered amount and details are separate. This is the amount they recorded, rather than a record of who actually paid or which reimbursements have already been made. `total household` continues to include only Household funding, rather than every budget stored with the shared account.
+
+Use `add Brownzie household` to create a category using the shared household budget, or `add Pension from investments` to use the shared Investments budget. A category using `individual` (older aliases `personal`, `main`, `overall`) uses the sender's individual budget. `budget <configured user name or ID>` queries that person's individual budget. The older `get ... budget` commands still work. Additional custom categories follow the built-in twelve in the menu; Gemini receives the expanded category list when command translation is requested.
 
 Months start on the 1st in `TIMEZONE`. Setting a limit mid-month retains all spending; limits do not carry into the next month. Each funding budget's **used = expenses + money lent + borrowed-money repayments assigned to it**. Ordinary `lend`/`repay` commands consume your personal budget; prefix loan commands with `household` for shared funding. Borrowing/collecting do not affect used or refund previous budget expenditure. Repayments cannot exceed the outstanding balance. Reuse the same counterparty spelling; loan balances span months. A budget named loan is only a funding label and does not create a debt record.
 
