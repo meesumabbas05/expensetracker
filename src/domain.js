@@ -46,10 +46,11 @@ export function categorySummary(rows, account, month, category, definitions = []
 
 export function categoryDefinitions(rows, account, config) {
   const definitions = config.categories.map(name => ({ name: name.trim(), source: config.categoryFunding?.[name.trim()] || (Object.values(config.categoryBudgets).includes(name.trim()) ? name.trim() : 'Budget') }));
-  for (const row of rows.filter(r => r.kind === 'category')) {
+  const categoryRows = rows.filter(r => r.kind === 'category').sort((a, b) => Number(b.account === account) - Number(a.account === account));
+  for (const row of categoryRows) {
     const definition = JSON.parse(row.description);
-    if (row.account !== account && definition.source?.trim().toLowerCase() !== 'household') continue;
     if (typeof definition.source !== 'string' || !definition.source.trim()) throw new Error('Invalid category definition');
+    if (row.account !== account && budgetAccount(definition.source, account, config).account !== 'household') continue;
     if (config.categoryFunding && definitions.some(d => d.name.toLowerCase() === row.category.toLowerCase())) continue;
     definitions.push({ name: row.category.trim(), source: canonicalBudget(definition.source, config) });
   }
@@ -67,12 +68,22 @@ export function canonicalBudget(name, config) {
   return Object.hasOwn(config.categoryBudgets, lower) ? config.categoryBudgets[lower] : name.trim();
 }
 
+export function budgetAccount(name, actorId, config) {
+  name = canonicalBudget(name, config);
+  if (name === 'household') return { account: 'household', name: 'Budget' };
+  return { account: config.sharedBudgets?.includes(name) ? 'household' : actorId, name };
+}
+
 // A transaction belongs to one funding budget; its actor still identifies who paid.
 export function fundingOf(row, rows, config) {
   const builtIn = row.kind === 'expense' && config.categoryFunding && Object.entries(config.categoryFunding).find(([category]) => category.toLowerCase() === row.category.toLowerCase());
   if (builtIn) {
     const source = canonicalBudget(builtIn[1], config);
-    return source === 'household' ? { account: 'household', name: 'Budget' } : { account: row.actor || row.account, name: source };
+    return budgetAccount(source, row.actor || row.account, config);
+  }
+  if (row.kind === 'expense' && config.sharedBudgets) {
+    const definition = categoryDefinitions(rows, row.actor || row.account, config).find(d => d.name.toLowerCase() === row.category.toLowerCase());
+    if (definition && budgetAccount(definition.source, row.actor || row.account, config).account === 'household') return budgetAccount(definition.source, row.actor || row.account, config);
   }
   if (row.account === 'household') return { account: 'household', name: 'Budget' };
   const definition = row.kind === 'expense' ? categoryDefinitions(rows, row.account, config).find(d => d.name.toLowerCase() === row.category.toLowerCase()) : null;
@@ -80,9 +91,10 @@ export function fundingOf(row, rows, config) {
   return source.toLowerCase() === 'household' ? { account: 'household', name: 'Budget' } : { account: row.account, name: source };
 }
 export function fundingSummary(rows, account, month, name, config) {
-  name = canonicalBudget(name, config);
+  ({ account, name } = budgetAccount(name, account, config));
   const defaultLimit = ['Budget', ...Object.values(config.categoryBudgets)].includes(name) ? config.defaultMonthlyBudget ?? null : null;
-  const limit = rows.filter(r => r.account === account && r.month === month && r.kind === 'budget' && canonicalBudget(r.category, config).toLowerCase() === name.toLowerCase()).at(-1)?.amount ?? defaultLimit;
+  const shared = config.sharedBudgets?.includes(name);
+  const limit = rows.filter(r => (shared || r.account === account) && r.month === month && r.kind === 'budget' && canonicalBudget(r.category, config).toLowerCase() === name.toLowerCase()).at(-1)?.amount ?? defaultLimit;
   const spending = rows.filter(r => {
     if (r.month !== month || !['expense', 'lend', 'repay'].includes(r.kind)) return false;
     const funding = fundingOf(r, rows, config);
