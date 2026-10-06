@@ -64,7 +64,7 @@ Amounts are positive with up to two decimals. Completed expenses, loans, categor
 
 Use Add expense, Set budget, Add new budget, Add category, View budgets, Undo last change, and optionally Cancel unfinished input. Replace the former Confirm pending entry branch with a Text action containing `undo`, then Set Variable `Message` to that Text. Completed commands save as soon as you send them; no `yes` message is needed. Cancel affects only unfinished input.
 
-The current shortcut copies `Message` to the clipboard and opens the configured Discord channel. Paste and tap Send there using your own Discord account; webhook messages are ignored by this bot. Each person's undo reverses their own latest change, including entries in shared budgets. Reports do not count as changes.
+Follow the [complete iPhone setup guide](docs/iphone-shortcuts.md) to create one Discord webhook per person, map its numeric ID in `USERS_JSON` using optional `discordWebhookIds`, and send `Message` through Shortcuts with a JSON POST. The shortcut sends without opening Discord. Webhooks require `DISCORD_CHANNEL_ID` and are accepted only in that channel; unmapped webhooks and other bots remain ignored. The private webhook URL goes only on its owner's phone; anyone holding it can issue commands as that owner. Keep it private and remove it from templates before sharing. Each person's undo reverses their own latest change, including shared entries. Reports do not count as changes. Bot replies appear in Discord; the webhook response confirms delivery, not ledger saving.
 
 ## Local setup
 
@@ -119,7 +119,7 @@ Change `BOT_TRANSPORT` in the environment and restart the service. For GitHub de
    ```
 
    DMs from configured users work in either mode. Setting `DISCORD_CHANNEL_ID` also allows messages from those users in exactly that server channel. Enable **Message Content Intent** on the portal's Bot page for server channel use; DM-only mode does not request this privileged intent. See the [discord.js intents guide](https://discordjs.guide/legacy/popular-topics/intents) and [Discord's message content FAQ](https://support-dev.discord.com/hc/en-us/articles/4404772028055-Message-Content-Privileged-Intent-FAQ).
-5. Install with `PUPPETEER_SKIP_DOWNLOAD=true npm ci`, then run `npm run check && npm test && npm start`. Send `help expense` to the bot in a DM or the configured channel. Use the same plain text commands and numbered/`yes` replies as WhatsApp; slash commands are not implemented.
+5. Install with `PUPPETEER_SKIP_DOWNLOAD=true npm ci`, then run `npm run check && npm test && npm start`. Send `help expense` to the bot in a DM or the configured channel. Use the same plain text commands and numbered replies as WhatsApp; completed entries save immediately; slash commands are not implemented.
 
 Discord mode needs no Chromium, QR pairing or public application port. Only its adapter is loaded at runtime. Replies stay in the chat where the command was sent, so choose a private channel for financial reports. Message text never triggers Discord mentions in bot replies. Long reports are split into messages within Discord's 2,000-character limit.
 
