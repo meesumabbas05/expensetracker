@@ -1,4 +1,4 @@
-import { amount, dateParts, money, loans, categoryDefinitions, fundingOf, fundingSummary, canonicalBudget, budgetAccount } from './domain.js';
+import { amount, dateParts, money, loans, categoryDefinitions, fundingOf, fundingSummary, canonicalBudget, budgetAccount, activeLedgerRows } from './domain.js';
 import { translateCommand } from './extract.js';
 import { parseCommand, validGeneratedCommand } from './commands.js';
 export class Bot {
@@ -8,7 +8,7 @@ export class Bot {
   fmt(n) { return money(n, this.config.currency); }
   menu(categories = this.config.categories) { return categories.map((c, i) => `${i + 1}. ${c}`).join('\n'); }
   help() {
-    return `Commands (positive amounts, up to 2 decimals):\nexpense 400\ngemini <request> — explicitly translate a request into a command\nexpense 4000 dinner at a restaurant\nexpense 100 Brownzie\nexpense <amount> <description> | <category>\nset budget 25000 / set individual budget 25000\nset household budget 80000\nset shopping budget 25000 — Shopping and Dine-out share this limit\nset investments budget 25000\nset <budget name> budget <amount>\nbudget — your individual budget\nbudget <name> — one funding budget\nbudget detail <name> — remaining, totals and entries by category\nbudget household by <name or ID> — amount entered by that person\nbudget detail household by <name or ID> — their household entries\nbudget detail — individual details\nbudget all — each budget separately\nbudget all detail — all entries grouped by budget and category\nget budget / get budget detail (legacy aliases)\ntotal <configured name or ID> / total household\nlend 1000 to Alex / borrow 1000 from Alex\ncollect 500 from Alex / repay 500 to Alex\nloans / household loans\nadd <category> — choose separate or existing funding\nadd <category> household / add <category> loan\nadd <category> <budget>\nadd category <multiword category name>\nadd <category> from <multiword budget name>\ncategories\ncancel / help expense / help expenses\nReply yes to save pending entries. Household, Shopping & Dine-out and Investments are shared; Individual and custom personal budgets belong to the sender. Entries retain who entered them. Each expense uses one funding budget. Months start on the 1st; budget updates retain spending.`;
+    return `Commands (positive amounts, up to 2 decimals):\nexpense 400\ngemini <request> — explicitly translate a request into a command\nexpense 4000 dinner at a restaurant\nexpense 100 Brownzie\nexpense <amount> <description> | <category>\nset budget 25000 / set individual budget 25000\nset household budget 80000\nset shopping budget 25000 — Shopping and Dine-out share this limit\nset investments budget 25000\nset <budget name> budget <amount>\nbudget — your individual budget\nbudget <name> — one funding budget\nbudget detail <name> — remaining, totals and entries by category\nbudget household by <name or ID> — amount entered by that person\nbudget detail household by <name or ID> — their household entries\nbudget detail — individual details\nbudget all — each budget separately\nbudget all detail — all entries grouped by budget and category\nget budget / get budget detail (legacy aliases)\ntotal <configured name or ID> / total household\nlend 1000 to Alex / borrow 1000 from Alex\ncollect 500 from Alex / repay 500 to Alex\nloans / household loans\nadd <category> — choose separate or existing funding\nadd <category> household / add <category> loan\nadd <category> <budget>\nadd category <multiword category name>\nadd <category> from <multiword budget name>\ncategories\nundo — reverse your latest saved change\ncancel — discard unfinished input\nhelp expense / help expenses\nCompleted entries save immediately. Use undo to reverse your latest change. Household, Shopping & Dine-out and Investments are shared; Individual and custom personal budgets belong to the sender. Entries retain who entered them. Each expense uses one funding budget. Months start on the 1st; budget updates retain spending.`;
   }
   async handle(actor, text, messageId, translated = false) {
     text = text.trim();
@@ -17,9 +17,18 @@ export class Bot {
     if (lower === 'help') return null;
     if (/^help\s+expenses?$/.test(lower)) return this.help();
     if (lower === 'cancel' || lower === 'no') { delete this.sessions[actor.id]; await this.saveSessions(); return 'Entry cancelled.'; }
-    const rows = await this.store.rows();
+    const history = await this.store.rows();
+    const rows = activeLedgerRows(history);
     let pending = this.sessions[actor.id];
     if (pending && this.now().getTime() - pending.updated > this.config.ttl) { delete this.sessions[actor.id]; await this.saveSessions(); pending = null; }
+    if (pending && history.some(r => r.id === pending.id) && !rows.some(r => r.id === pending.id)) { delete this.sessions[actor.id]; await this.saveSessions(); pending = null; }
+    if (pending?.stage === 'confirm') pending.stage = 'ready'; // Earlier saved sessions.
+    const retryingSave = pending?.stage === 'ready' && [pending.id, pending.lastMessageId].includes(messageId) && rows.some(r => r.id === pending.id);
+    if (history.some(r => r.id === messageId) && !retryingSave) {
+      if (lower === 'undo') { delete this.sessions[actor.id]; await this.saveSessions(); }
+      return 'This request has already been processed.';
+    }
+    if (lower === 'undo') return this.undo(actor, messageId, rows);
     const geminiRequest = text.match(/^gemini(?:\s+([\s\S]*))?$/i);
     if (pending && geminiRequest) return 'Finish the pending entry or send cancel before using gemini.';
     if (pending) {
@@ -28,37 +37,21 @@ export class Bot {
         pending.funding = categoryDefinitions(rows, actor.id, this.config).find(d => d.name === pending.category)?.source || 'Budget';
         if (pending.account === 'household' && pending.funding !== 'household') return 'That category is not funded by household. Send cancel and enter expense without the household prefix.';
       }
-      if (pending.lastMessageId === messageId) return this.prompt(pending);
+      if (pending.lastMessageId === messageId && pending.stage !== 'ready') return this.prompt(pending);
       if (pending.kind === 'category') return this.handleCategory(actor, text, messageId, pending, rows);
-      if (pending.stage === 'confirm') {
-        if (lower !== 'yes') return 'Reply yes to save, or cancel to discard.';
-        // Category funding never converts an expense into lending or borrowing.
-        if (['collect', 'repay'].includes(pending.kind) && !rows.some(r => r.id === pending.id)) {
-          const side = pending.kind === 'collect' ? 'lent' : 'borrowed';
-          const balance = loans(rows, pending.account).find(l => l.side === side && l.person.toLowerCase() === pending.description.toLowerCase())?.amount || 0;
-          if (pending.amount > balance) return `Outstanding ${side} balance for this person is ${this.fmt(balance)}. Cancel and enter a smaller amount.`;
-        }
-        const date = this.now();
-        const row = { ...pending, ...dateParts(date, this.config.timezone), timestamp: date.toISOString(), actor: actor.id };
-        if (row.kind === 'expense' && this.config.sharedBudgets) row.account = fundingOf(row, rows, this.config).account;
-        await this.store.append(row);
-        delete this.sessions[actor.id]; await this.saveSessions();
-        if (row.kind === 'expense' && this.config.sharedBudgets) return `Saved expense: ${this.fmt(row.amount)} — ${row.description}\nBudget: ${pending.funding === 'Budget' ? 'individual' : pending.funding}\nEntered by: ${actor.name}`;
-        return `Saved ${row.kind}: ${this.fmt(row.amount)} — ${row.description} (${row.account}).`;
-      }
+      if (pending.stage === 'ready') return this.saveEntry(actor, pending, rows);
       if (pending.stage === 'description') {
         if (text.length > 200) return 'Use a description under 200 characters.';
         pending.description = text; pending.stage = 'category';
       } else {
         const options = pending.options || categoryDefinitions(rows, pending.account, this.config).map(d => d.name);
         if (!/^\d+$/.test(text) || Number(text) < 1 || Number(text) > options.length) return `Reply with a category number 1–${options.length}:\n${this.menu(options)}`;
-        pending.category = options[Number(text) - 1]; pending.stage = 'confirm';
+        pending.category = options[Number(text) - 1]; pending.stage = 'ready';
       }
       if (pending.kind === 'expense' && pending.category) pending.funding = categoryDefinitions(rows, pending.account, this.config).find(d => d.name === pending.category)?.source || 'Budget';
       pending.updated = this.now().getTime(); pending.lastMessageId = messageId; await this.saveSessions();
-      return this.prompt(pending);
+      return pending.stage === 'ready' ? this.saveEntry(actor, pending, rows) : this.prompt(pending);
     }
-    if (rows.some(r => r.id === messageId)) return 'This entry has already been saved.';
     const categoryNames = categoryDefinitions(rows, actor.id, this.config).map(d => d.name);
     if (geminiRequest && !translated) {
       const input = (geminiRequest[1] || '').trim();
@@ -133,14 +126,61 @@ export class Bot {
           if (parsedCommand.category && !pending.options.includes(parsedCommand.category)) return 'That category is not funded by household. Use expense without the household prefix.';
           pending.description = parsedCommand.description;
           pending.category = parsedCommand.category || direct;
-          pending.stage = 'confirm';
+          pending.stage = 'ready';
         } else pending.stage = 'category';
-      } else pending.stage = 'confirm';
+      } else pending.stage = 'ready';
     }
     // Loans require a counterparty, not an expense category.
     if (kind !== 'expense' && pending.stage === 'description') return `Use ${kind} <amount> ${['lend', 'repay'].includes(kind) ? 'to' : 'from'} <person>.`;
     if (pending.kind === 'expense' && pending.category) pending.funding = categoryDefinitions(rows, pending.account, this.config).find(d => d.name === pending.category)?.source || 'Budget';
-    this.sessions[actor.id] = pending; await this.saveSessions(); return this.prompt(pending);
+    this.sessions[actor.id] = pending; await this.saveSessions();
+    return pending.stage === 'ready' ? this.saveEntry(actor, pending, rows) : this.prompt(pending);
+  }
+  async saveEntry(actor, pending, rows) {
+    if (pending.kind === 'expense' && !categoryDefinitions(rows, actor.id, this.config).some(d => d.name.toLowerCase() === pending.category.toLowerCase())) {
+      delete this.sessions[actor.id]; await this.saveSessions();
+      return 'That category is no longer available. Enter the expense again and choose an existing category.';
+    }
+    // An uncertain write may already exist; append remains idempotent.
+    if (['collect', 'repay'].includes(pending.kind) && !rows.some(r => r.id === pending.id)) {
+      const side = pending.kind === 'collect' ? 'lent' : 'borrowed';
+      const balance = loans(rows, pending.account).find(l => l.side === side && l.person.toLowerCase() === pending.description.toLowerCase())?.amount || 0;
+      if (pending.amount > balance) {
+        delete this.sessions[actor.id]; await this.saveSessions();
+        return `Outstanding ${side} balance for this person is ${this.fmt(balance)}. Enter a smaller amount.`;
+      }
+    }
+    const date = this.now();
+    const row = { ...pending, ...dateParts(date, this.config.timezone), timestamp: date.toISOString(), actor: actor.id };
+    if (row.kind === 'expense' && this.config.sharedBudgets) row.account = fundingOf(row, rows, this.config).account;
+    await this.store.append(row);
+    delete this.sessions[actor.id]; await this.saveSessions();
+    if (row.kind === 'expense' && this.config.sharedBudgets) return `Saved expense: ${this.fmt(row.amount)} — ${row.description}\nBudget: ${pending.funding === 'Budget' ? 'individual' : pending.funding}\nEntered by: ${actor.name}\nUse undo to reverse this entry.`;
+    return `Saved ${row.kind}: ${this.fmt(row.amount)} — ${row.description} (${row.account}). Use undo to reverse this entry.`;
+  }
+  async undo(actor, id, rows) {
+    const last = rows.findLast(r => r.actor === actor.id);
+    if (!last) return 'There is no saved change of yours to undo.';
+    // Category creation and its initial limit are one operation.
+    const category = last.kind === 'budget' && last.id.endsWith(':budget') ? rows.find(r => r.id === last.id.slice(0, -7) && r.kind === 'category' && r.actor === actor.id) : last.kind === 'category' ? last : null;
+    const targets = category ? rows.filter(r => r.actor === actor.id && [category.id, `${category.id}:budget`].includes(r.id)) : [last];
+    const remaining = rows.filter(r => !targets.includes(r));
+    if (category) {
+      const affected = remaining.some(r => {
+        if (r.kind !== 'expense' || r.category.toLowerCase() !== category.category.toLowerCase()) return false;
+        const before = categoryDefinitions(rows, r.actor, this.config).find(d => d.name.toLowerCase() === r.category.toLowerCase());
+        const after = categoryDefinitions(remaining, r.actor, this.config).find(d => d.name.toLowerCase() === r.category.toLowerCase());
+        return before && (!after || before.source !== after.source);
+      });
+      if (affected) return 'Cannot undo this category while saved expenses use it. Undo those expenses first.';
+    }
+    if (['lend', 'borrow', 'collect', 'repay'].includes(last.kind) && loans(remaining, last.account).some(balance => balance.amount < 0)) return 'Cannot undo this loan entry while later collections or repayments depend on it. Undo those entries first.';
+    const date = this.now();
+    await this.store.append({ id, timestamp: date.toISOString(), ...dateParts(date, this.config.timezone), account: actor.id, actor: actor.id, kind: 'undo', amount: 0, description: JSON.stringify(targets.map(r => r.id)), category: 'Undo' });
+    delete this.sessions[actor.id]; await this.saveSessions();
+    if (category) return `Undid category ${category.category}${targets.length > 1 ? ' and its initial budget limit' : ''}.`;
+    if (last.kind === 'budget') return `Undid your budget update for ${last.category === 'Budget' ? last.account === 'household' ? 'household' : 'individual' : last.category}. The previous applicable limit is restored.`;
+    return `Undid ${last.kind}: ${this.fmt(last.amount)} — ${last.description}.`;
   }
   reportBudget(rows, actorId, month, requested, detail = false) {
     const selection = requested.match(/^(.+?)\s+by\s+(.+)$/i);
@@ -191,7 +231,7 @@ export class Bot {
     return sections.join('\n\n────────\n\n');
   }
   validName(name) {
-    return typeof name === 'string' && name.trim().length > 0 && name.trim().length <= 60 && !/[\r\n]/.test(name) && !['yes', 'no', 'cancel', 'help', 'detail', 'all', 'budget detail'].includes(name.trim().toLowerCase());
+    return typeof name === 'string' && name.trim().length > 0 && name.trim().length <= 60 && !/[\r\n]/.test(name) && !['yes', 'no', 'cancel', 'undo', 'help', 'detail', 'all', 'budget detail'].includes(name.trim().toLowerCase());
   }
   budgetNames(rows, account) {
     return [...new Set([...Object.values(this.config.categoryBudgets), ...rows.filter(r => r.account === account && r.kind === 'budget').map(r => canonicalBudget(r.category, this.config)), ...categoryDefinitions(rows, account, this.config).map(d => d.source)].filter(s => s !== 'Budget'))];
@@ -220,23 +260,22 @@ export class Bot {
     if (!this.validName(body) || ['budget', 'main', 'overall', 'personal', 'individual', 'household', 'all'].includes(body.toLowerCase())) return 'Use a category name of 1–60 characters. For multiword names use add category <name>.';
     if (categoryDefinitions(rows, account, this.config).some(d => d.name.toLowerCase() === body.toLowerCase())) return 'That category already exists in this account.';
     if (source && !this.validName(source)) return 'Use a valid budget name of 1–60 characters.';
-    const pending = { id, kind: 'category', account, category: body, source, stage: source ? 'confirm' : 'category-mode', updated: this.now().getTime(), lastMessageId: id };
+    const pending = { id, kind: 'category', account, category: body, source, stage: source ? 'ready' : 'category-mode', updated: this.now().getTime(), lastMessageId: id };
     if (source) this.chooseSource(pending, source, rows);
     this.sessions[actor.id] = pending;
     await this.saveSessions();
-    return this.categoryPrompt(pending);
+    return pending.stage === 'ready' ? this.handleCategory(actor, '', id, pending, rows) : this.categoryPrompt(pending);
   }
   chooseSource(pending, source, rows) {
     pending.source = this.resolveBudget(source, rows, pending.account) || source.trim();
     const month = dateParts(this.now(), this.config.timezone).month;
     const hasBudget = pending.source === 'Budget' || fundingSummary(rows, pending.source === 'household' ? 'household' : pending.account, month, pending.source === 'household' ? 'Budget' : pending.source, this.config).limit !== null;
-    pending.stage = hasBudget ? 'confirm' : 'category-budget-amount';
+    pending.stage = hasBudget ? 'ready' : 'category-budget-amount';
   }
   async handleCategory(actor, text, id, pending, rows) {
     const lower = text.toLowerCase();
     if (pending.source) pending.source = canonicalBudget(pending.source, this.config);
-    if (pending.stage === 'confirm') {
-      if (lower !== 'yes') return 'Reply yes to save, or cancel to discard.';
+    if (pending.stage === 'ready') {
       if (categoryDefinitions(rows, pending.account, this.config).some(d => d.name.toLowerCase() === pending.category.toLowerCase()) && !rows.some(r => r.id === pending.id)) return 'That category was already added. Cancel this entry.';
       const date = this.now();
       const base = { timestamp: date.toISOString(), ...dateParts(date, this.config.timezone), account: pending.account, actor: actor.id };
@@ -257,16 +296,17 @@ export class Bot {
       this.chooseSource(pending, text, rows);
     } else if (pending.stage === 'category-budget-amount') {
       try { pending.budgetAmount = amount(text); } catch (e) { return e.message; }
-      pending.stage = 'confirm';
+      pending.stage = 'ready';
     }
     pending.updated = this.now().getTime(); pending.lastMessageId = id;
-    await this.saveSessions(); return this.categoryPrompt(pending);
+    await this.saveSessions();
+    return pending.stage === 'ready' ? this.handleCategory(actor, '', id, pending, rows) : this.categoryPrompt(pending);
   }
   categoryPrompt(p) {
     if (p.stage === 'category-mode') return `How should ${p.category} be tracked?\n1. Separate budget (reply separate)\n2. Use another budget (reply shared)\nOr cancel.`;
     if (p.stage === 'category-source') return 'Which budget should pay for this category? Reply individual, household, shopping, investments, loan, or another budget name. A new name starts budget setup.';
     if (p.stage === 'category-budget-amount') return `Set the monthly budget amount for ${p.source}. Existing spending will be retained.`;
-    return `Add category: ${p.category}\nAccount: ${p.account}\nFunding budget: ${p.source === 'Budget' ? 'individual' : p.source}${p.budgetAmount ? `\nMonthly limit: ${this.fmt(p.budgetAmount)}` : ''}\nReply yes to save, or cancel.`;
+    return `Add category: ${p.category}\nAccount: ${p.account}\nFunding budget: ${p.source === 'Budget' ? 'individual' : p.source}${p.budgetAmount ? `\nMonthly limit: ${this.fmt(p.budgetAmount)}` : ''}\nSaving this entry…`;
   }
   prompt(p) {
     if (p.kind === 'category') return this.categoryPrompt(p);
@@ -274,7 +314,7 @@ export class Bot {
     if (p.stage === 'category') return `Choose a category:\n${this.menu(p.options)}`;
     const funding = p.account === 'household' ? 'household' : p.kind === 'expense' ? p.funding === 'Budget' ? 'individual' : p.funding || 'individual' : 'individual';
     const enteredBy = this.config.users.find(u => u.id === (p.actor || p.account))?.name || p.actor || p.account;
-    return `${p.kind} · ${this.fmt(p.amount)}\nFunding: ${funding}\nEntered by: ${enteredBy}\nFor: ${p.description}\nCategory: ${p.category}\nReply yes to save, or cancel.`;
+    return `${p.kind} · ${this.fmt(p.amount)}\nFunding: ${funding}\nEntered by: ${enteredBy}\nFor: ${p.description}\nCategory: ${p.category}\nSaving this entry…`;
   }
   details(rows) {
     return rows.map(r => `${r.date} · ${r.kind} · ${this.fmt(r.amount)} · ${r.description} · ${r.category}${r.account === 'household' ? ` · by ${r.actor}` : ''}`).join('\n') || 'No entries this month.';

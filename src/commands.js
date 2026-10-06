@@ -7,7 +7,7 @@ export function parseCommand(input, categories = []) {
   if (!text || text.length > 1000 || /[\r\n]/.test(text)) return null;
   const lower = text.toLowerCase();
   if (/^help\s+expenses?$/.test(lower)) return { kind: 'help', valid: true, text };
-  if (['cancel', 'no', 'yes'].includes(lower)) return { kind: 'session', valid: true, text };
+  if (['cancel', 'no', 'yes', 'undo'].includes(lower)) return { kind: 'session', valid: true, text };
   if (/^(household\s+)?(categories|loans)$/.test(lower)) return { kind: 'report', valid: true, text };
   if (/^budget(?:\s+.+)?$/i.test(text) || /^get\s+(?:(.+?)\s+)?budget(?:\s+detail)?$/i.test(text) || /^total\s+.+$/i.test(text)) return { kind: 'report', valid: true, text };
   if (/^(?:household\s+)?add\s+.+$/i.test(text)) return { kind: 'category', valid: true, text };

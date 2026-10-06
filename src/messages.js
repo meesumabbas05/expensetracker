@@ -29,7 +29,7 @@ export function createMessageProcessor(bot) {
           for (const chunk of splitReply(reply, message.limit)) await message.reply(chunk);
         } catch {
           console.error('Message processing failed; details suppressed for privacy.');
-          try { await message.reply('Could not complete the request. Retry; pending entries are retained. If a save succeeded, it will not be added twice.'); } catch { /* disconnected */ }
+          try { await message.reply('Could not complete the request. Retry the same input; unfinished input is retained. If a save succeeded, it will not be added twice.'); } catch { /* disconnected */ }
         }
       }).catch(() => console.error('Processing failed.'));
       return queue;

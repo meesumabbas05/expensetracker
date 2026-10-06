@@ -24,3 +24,8 @@ test('append trims strings, uses RAW and deduplicates by ID', async () => {
   assert.equal(await again.store.append(row), false);
   assert.equal(again.appended(), undefined);
 });
+test('undo ledger records have zero amount and retain target IDs', async () => {
+  const row = ['undo-id', '2026-10-06T12:00:00Z', '2026-10-06', '2026-10', 'one', 'one', 'undo', '0', '["expense-id"]', 'Undo'];
+  assert.equal((await mocked([row]).store.rows())[0].kind, 'undo');
+  await assert.rejects(mocked([[...row.slice(0, 7), '1', ...row.slice(8)]]).store.rows(), /Invalid ledger row/);
+});

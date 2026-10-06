@@ -17,7 +17,7 @@ function setup(existingRows = []) {
   const send = (text, actor = users[0]) => bot.handle(actor, text, `policy-${++sequence}`);
   const spend = async (category, value, actor = users[0]) => {
     await send(`expense ${value} purchase-${actor.id}-${category} | ${category}`, actor);
-    await send('yes', actor);
+
   };
   return { config, rows, bot, send, spend };
 }
@@ -133,11 +133,11 @@ test('existing ledger data is regrouped without rewriting it and latest old comb
   assert.equal(JSON.stringify(rows), snapshot);
 });
 
-test('a pending expense restored after deployment shows the corrected budget before confirmation', async () => {
+test('a pending expense restored after deployment saves immediately using the corrected budget', async () => {
   const { bot, rows, send } = setup();
   bot.sessions.one = { id: 'pending-old', lastMessageId: 'old-delivery', kind: 'expense', account: 'one', amount: 10000, description: 'dinner', category: 'Dine-out', funding: 'Dine-out', stage: 'confirm', updated: bot.now().getTime() };
-  assert.match(await bot.handle(users[0], 'expense 100 dinner', 'old-delivery'), /Funding: Shopping & Dine-out/);
-  await send('yes');
+  assert.match(await bot.handle(users[0], 'expense 100 dinner', 'old-delivery'), /Budget: Shopping & Dine-out/);
+
   assert.equal(rows.length, 1);
   assert.equal(rows[0].id, 'pending-old');
   assert.equal(rows[0].actor, 'one');
@@ -146,9 +146,9 @@ test('a pending expense restored after deployment shows the corrected budget bef
 
 test('custom categories using shared budgets are available to both people and personal definitions stay private', async () => {
   const { spend, send, rows } = setup();
-  await send('add Pension from investments'); await send('yes');
-  await send('add Gifts from shopping'); await send('yes');
-  await send('add Hobby from individual'); await send('yes');
+  await send('add Pension from investments');
+  await send('add Gifts from shopping');
+  await send('add Hobby from individual');
   const otherMenu = await send('categories', users[1]);
   assert.match(otherMenu, /Pension → Investments/);
   assert.match(otherMenu, /Gifts → Shopping & Dine-out/);
@@ -181,8 +181,8 @@ test('household command cannot charge a personal category and investments remain
   assert.match(await send('household expense 10 dinner | Dine-out'), /not funded by household/);
   assert.equal(rows.length, 0);
   assert.equal((await send('household categories')).split('\n').length, 3);
-  assert.match(await send('add Pension from investments'), /Reply yes/);
-  await send('yes');
+  assert.match(await send('add Pension from investments'), /Added/);
+
   assert.match(await send('categories'), /Pension → Investments/);
   const oldCategories = config.categories.slice(0, 10);
   const restored = readConfig({ ...env, CATEGORIES_JSON: JSON.stringify(oldCategories) });

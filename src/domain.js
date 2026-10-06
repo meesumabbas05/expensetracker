@@ -10,6 +10,19 @@ export function dateParts(date, timezone) {
   return { date: `${p.year}-${p.month}-${p.day}`, month: `${p.year}-${p.month}` };
 }
 export const money = (minor, currency) => `${currency} ${(minor / 100).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Undo records preserve the original ledger and survive process restarts.
+export function activeLedgerRows(history) {
+  const seen = new Map();
+  const undone = new Set();
+  for (const row of history) {
+    if (row.kind === 'undo') {
+      const ids = JSON.parse(row.description);
+      if (!Array.isArray(ids) || !ids.length || ids.length > 2 || new Set(ids).size !== ids.length || ids.some(id => !seen.has(id) || seen.get(id).actor !== row.actor || undone.has(id))) throw new Error('Invalid undo record');
+      for (const id of ids) undone.add(id);
+    } else seen.set(row.id, row);
+  }
+  return history.filter(row => row.kind !== 'undo' && !undone.has(row.id));
+}
 export function summary(rows, account, month) {
   const entries = rows.filter(r => r.account === account && r.month === month);
   const budgets = entries.filter(r => r.kind === 'budget' && r.category === 'Budget');

@@ -107,7 +107,6 @@ test('Discord expense flow writes to the same account and deduplicates redeliver
   const client = FakeClient.instance;
   const send = (content, id) => client.emit(discord.Events.MessageCreate, dm({ content, id }));
   send('expense 400 dinner | Dine-out', 'origin');
-  send('yes', 'confirmation');
   send('expense 400 dinner | Dine-out', 'origin');
   await processor.close();
   assert.equal(rows.length, 1);

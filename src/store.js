@@ -15,7 +15,7 @@ export class SheetStore {
   async rows() {
     const { data } = await this.api.spreadsheets.values.get({ spreadsheetId: this.id, range: 'Ledger!A2:J' });
     return (data.values || []).map(r => {
-      if (r.length !== 10 || !Number.isSafeInteger(Number(r[7])) || (r[6] === 'category' ? Number(r[7]) !== 0 : Number(r[7]) <= 0) || !['expense', 'budget', 'lend', 'borrow', 'collect', 'repay', 'category'].includes(r[6]) || !/^\d{4}-\d{2}$/.test(r[3])) throw new Error('Invalid ledger row');
+      if (r.length !== 10 || !Number.isSafeInteger(Number(r[7])) || (['category', 'undo'].includes(r[6]) ? Number(r[7]) !== 0 : Number(r[7]) <= 0) || !['expense', 'budget', 'lend', 'borrow', 'collect', 'repay', 'category', 'undo'].includes(r[6]) || !/^\d{4}-\d{2}$/.test(r[3])) throw new Error('Invalid ledger row');
       return { id: r[0], timestamp: r[1], date: r[2], month: r[3], account: r[4], actor: r[5], kind: r[6], amount: Number(r[7]), description: r[8].trim(), category: r[9].trim() };
     });
   }
